@@ -7,7 +7,6 @@ const Export = _UtilsLocal.ExportObj
 const _ExportFileUtils = _UtilsLocal.ExportFileUtils
 const KeysConfig = _ExportFileUtils.KeysConfig
 
-const _UEditor = _UtilsRemote.UEditor
 
 var class_list_array = []
 var class_list = {}
@@ -36,11 +35,14 @@ var file_parser: _UtilsLocal.FileParser
 var parser_settings:Dictionary = {}
 ## Shared by every export in this config: a source file's tags do not change between them.
 var tag_registry: _UtilsLocal.TagRegistry = _UtilsLocal.TagRegistry.new()
+## Passed in rather than attached after: the whole crawl runs inside _init.
+var reporter: _UtilsLocal.Reporter
 
 var exports:Array[Export]
 
-func _init(export_config_path):
-	var export_data = _ExportFileUtils.get_export_data(export_config_path)
+func _init(export_config_path, _reporter = null):
+	reporter = _UtilsLocal.Reporter.or_default(_reporter)
+	var export_data = _ExportFileUtils.get_export_data(export_config_path, reporter)
 	if not export_data:
 		return
 	
@@ -48,18 +50,18 @@ func _init(export_config_path):
 	
 	export_root = export_data.get(KeysConfig.EXPORT_ROOT)
 	plugin_folder = export_data.get(KeysConfig.PLUGIN_FOLDER)
-	full_export_path = _ExportFileUtils.get_full_export_path(export_root, plugin_folder, export_config_path)
+	full_export_path = _ExportFileUtils.get_full_export_path(export_root, plugin_folder, export_config_path, reporter)
 	if full_export_path == "":
 		return
 	
 	post_script = export_data.get("post_script","")
 	if post_script != "":
-		if not _ExportFileUtils.check_export_script_valid(post_script, "post_export"):
+		if not _ExportFileUtils.check_export_script_valid(post_script, "post_export", reporter):
 			return
 	
 	pre_script = export_data.get("pre_script","")
 	if pre_script != "":
-		if not _ExportFileUtils.check_export_script_valid(pre_script, "pre_export"):
+		if not _ExportFileUtils.check_export_script_valid(pre_script, "pre_export", reporter):
 			return
 	
 	var strip_cast_path = export_config_path.get_base_dir().path_join("strip_cast.txt")
@@ -105,16 +107,15 @@ func _init(export_config_path):
 			export_obj.source = export_obj.source + "/"
 		
 		if not DirAccess.dir_exists_absolute(export_obj.source):
-			_UEditor.push_toast(export_obj.source + " does not exist.",2)
+			reporter.error(export_obj.source + " does not exist.", true)
 			return
-		export_obj.export_name = _ExportFileUtils.get_export_name(export, plugin_folder, export_config_path)
+		export_obj.export_name = _ExportFileUtils.get_export_name(export, plugin_folder, export_config_path, reporter)
 		export_obj.export_folder = _ExportFileUtils.get_export_folder(export, export_config_path)
 		if export_obj.export_name == "" or export_obj.export_folder == "":
 			var raw_folder = String(export.get(KeysConfig.Export.EXPORT_FOLDER, ""))
 			var reason = _ExportFileUtils.ExportPaths.export_folder_error(raw_folder)
 			var msg = "export_folder \"%s\" %s" % [raw_folder, reason] if reason != "" else "invalid export_name or export_folder for " + export_obj.source
-			printerr("Package Exporter - " + msg) # a headless release child has no toast
-			_UEditor.push_toast(msg, 2)
+			reporter.error("Package Exporter - " + msg, true)
 			return
 
 		# export_folder is the install path, so a source anywhere else is being renamed.

@@ -39,7 +39,10 @@ static func build(plugin_name:String) -> Dictionary:
 		return report
 	var data = ExportData.new(config_path)
 	if not data.data_valid:
-		report.errors.append("the export crawl failed for %s; see the output log" % plugin_name)
+		report.errors.append("the export crawl failed for %s:" % plugin_name)
+		for entry in data.reporter.entries:
+			if entry.level == UtilsLocal.Reporter.Level.ERROR:
+				report.errors.append("  " + entry.text)
 		return report
 
 	var cache = {}

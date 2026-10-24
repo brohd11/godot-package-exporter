@@ -57,7 +57,7 @@ func scan_direct_edges(file_path:String) -> Array:
 	scanner.roots = [file_path]
 	var graph = scanner.get_graph()
 	for edge in graph.unresolved:
-		printerr('Unresolved reference "%s" in %s:%s' % [edge.raw, edge.from, edge.line_no])
+		export_obj.reporter.error('Unresolved reference "%s" in %s:%s' % [edge.raw, edge.from, edge.line_no])
 	var edges = graph.get_out_edges(file_path)
 	_edge_cache[file_path] = edges
 	return edges
@@ -230,7 +230,7 @@ static func get_class_token_regex(cls:String) -> RegEx:
 func _rewrite_ser_file(file_path:String, header:String) -> Variant:
 	var file_access = FileAccess.open(file_path, FileAccess.READ)
 	if not file_access:
-		printerr("%s - Issue reading file: %s" % [get_script().resource_path.get_file(), file_path])
+		export_obj.reporter.error("%s - Issue reading file: %s" % [get_script().resource_path.get_file(), file_path])
 		return null
 
 	var file_dependencies_keys = export_obj.file_dependencies.keys()

@@ -8,7 +8,6 @@ const DOC_DIR_NAME = ".doc"
 const PROJECT_LICENSE_DIR = "res://"
 
 const _UtilsRemote = preload("res://addons/package_exporter/src/class/utils_remote.gd")
-const _UEditor = _UtilsRemote.UEditor
 const _UtilsLocal = preload("res://addons/package_exporter/src/class/utils_local.gd")
 const _ExportFileUtils = _UtilsLocal.ExportFileUtils
 const _KeysConfig = _ExportFileUtils.KeysConfig
@@ -22,6 +21,8 @@ const _PackageCfg = preload("res://addons/package_exporter/src/class/export/pack
 const _VersionScanner = preload("res://addons/package_exporter/src/editor_plugins/console_command/min_version/version_scanner.gd")
 
 var export_data: _ExportData
+var reporter: _UtilsLocal.Reporter:
+	get: return export_data.reporter
 var source:String
 var remote_dir:String
 ## Package folder under the full export path; zipped as a whole.
@@ -116,7 +117,7 @@ func get_valid_files_for_transfer():
 		var export_path = get_export_path(l_path)
 		
 		if FileAccess.file_exists(export_path) and not export_data.overwrite:
-			_UEditor.push_toast("File exists, aborting: " + export_path, 2 as _UEditor.ToastSeverity)
+			reporter.error("File exists, aborting: " + export_path, true)
 			invalidate()
 			return
 
@@ -138,7 +139,7 @@ func get_valid_files_for_transfer():
 			continue
 
 		if FileAccess.file_exists(row[_KeysData.TO]) and not export_data.overwrite:
-			_UEditor.push_toast("File exists, aborting: " + row[_KeysData.TO], 2 as _UEditor.ToastSeverity)
+			reporter.error("File exists, aborting: " + row[_KeysData.TO], true)
 			invalidate()
 			return
 
@@ -189,7 +190,7 @@ func get_global_classes_used_in_valid_files():
 		var file_ext = file.get_extension()
 		var classes_used
 		if file_ext == "gd":
-			classes_used = _ExportFileUtils.get_global_classes_in_file(file, export_data.class_list)
+			classes_used = _ExportFileUtils.get_global_classes_in_file(file, export_data.class_list, reporter)
 		elif file_ext == "tres" or file_ext == "tscn":
 			var classes = {}
 			var scripts = _ExportFileUtils.get_scripts_in_ser_file(file)
@@ -311,8 +312,7 @@ func _dependency_placement_error(path:String, reason:String) -> void:
 	var data:Dictionary = _dependency_placements[path]
 	var message = 'Dependency destination "%s" for %s declared in %s: %s' % [
 		data[_KeysData.DEPENDENCY_DIR], path, data[_KeysData.DEPENDENCY_SOURCE], reason]
-	printerr("Package Exporter - " + message)
-	_UEditor.push_toast(message, 2)
+	reporter.error("Package Exporter - " + message, true)
 	files_to_copy.erase(path)
 	adjusted_remote_paths.erase(path)
 	_local_copy_paths.erase(path)
@@ -453,7 +453,7 @@ func check_all_files_have_valid_path():
 func get_singleton_modules():
 	var all_data = []
 	for file_path:String in files_to_copy.keys():
-		if not _ExportFileUtils.is_singleton_module_script(file_path):
+		if not _ExportFileUtils.is_singleton_module_script(file_path, reporter):
 			continue
 		if not file_parser.check_file_valid(file_path):
 			continue
@@ -559,7 +559,7 @@ func update_plugin_cfg():
 					lines.insert(section_lines[i] + 1, min_msg)
 					break
 		else:
-			printerr("No min_version API index found, minimum_version not written: %s" % plugin_cfg_path)
+			reporter.warn("No min_version API index found, minimum_version not written: %s" % plugin_cfg_path)
 	
 	
 	var file_access = FileAccess.open(plugin_cfg_path, FileAccess.WRITE)
@@ -573,7 +573,7 @@ func _update_deps(plugin_cfg_path:String):
 		return
 	var file = FileAccess.open(plugin_cfg_path, FileAccess.WRITE)
 	if file == null:
-		printerr("Could not write config: ", plugin_cfg_path)
+		reporter.error("Could not write config: %s" % plugin_cfg_path)
 		return
 	file.store_string(updated)
 
@@ -637,7 +637,7 @@ func gather_licenses():
 			var dir_name = file.get_base_dir().trim_prefix("res://").trim_prefix("addons/").replace("/", "_")
 			local_path = source.path_join("licenses").path_join(dir_name).path_join(license_name)
 		if seen_license_paths.has(local_path):
-			printerr("Potential LICENSE clash: ", local_path)
+			reporter.warn("Potential LICENSE clash: %s" % local_path)
 		seen_license_paths[local_path] = true
 		# Mapped out of res:// from the in-plugin path like every other copy; renaming first would
 		# strip the source prefix get_export_path matches on, writing the file into the live project.
@@ -664,10 +664,10 @@ func check_file_has_valid_path(source_path:String, export_path:String) -> void:
 	var globalized_export = ProjectSettings.globalize_path(export_path)
 	
 	if globalized_export.is_relative_path():
-		print("Issue with file export, export path is relative path: %s" % globalized_export)
+		reporter.error("Issue with file export, export path is relative path: %s" % globalized_export)
 		export_valid = false
 	if globalized_source == globalized_export:
-		print("Issue with file export, export path == source path: %s" % globalized_source)
+		reporter.error("Issue with file export, export path == source path: %s" % globalized_source)
 		export_valid = false
 
 
@@ -795,7 +795,7 @@ func _simple_export(from, export_path, export_uid_file, export_import_file):
 	if FileAccess.file_exists(export_path): ## this message prints when a duplicate is replaced with get_remote_file_local_path ^^
 		var raw_path = export_data.full_export_path
 		var msg = "Overwriting duplicate file: %s with %s" % [export_path.replace(raw_path, "").trim_prefix("/"), from]
-		_UtilsRemote.UEditor.print_warn(msg)
+		reporter.warn(msg)
 	
 	var export_path_dir = export_path.get_base_dir()
 	if not DirAccess.dir_exists_absolute(export_path_dir):

@@ -6,10 +6,11 @@ const PECommandUtils = preload("res://addons/package_exporter/src/editor_plugins
 const _HELP = \
 "Run a package's tests as test CI does: its tree against its requires at their tags, in a
 workspace without the rest of this project - so a pass means its declared requires are enough.
-Usage: package_exporter ci run_test [--local] [--refresh] <plugin_name>"
+Usage: package_exporter ci run_test [--verbose] [--local] [--refresh] <plugin_name>"
 
 var refresh_flag := false
 var local_flag := false
+var verbose_flag := false
 
 static func get_command_name() -> String:
 	return "run_test"
@@ -25,6 +26,9 @@ func _get_completions(ctx:Completion):
 
 func _get_flags() -> Dictionary:
 	var options = Options.new()
+	options.add_option("--verbose", {
+		&"help": "Also show progress and passing suites; failures, skips and the result always show."
+	})
 	options.add_option("--refresh", {
 		&"help": "Re-check cached tags against their remotes, failing if one moved."
 	})
@@ -38,10 +42,9 @@ func _process_flag(flag:String):
 		refresh_flag = true
 	elif flag == "--local":
 		local_flag = true
+	elif flag == "--verbose":
+		verbose_flag = true
 
 func _execute(ctx:Context):
-	if PluginExporter.test_package(positional_args[0], refresh_flag, local_flag):
-		return ExitCode.OK
-	for line in load("res://addons/package_exporter/src/class/release/test_ci.gd").messages:
-		ctx.append_error(line)
-	return ExitCode.FAIL
+	var reporter = PECommandUtils.console_reporter(ctx, verbose_flag)
+	return ExitCode.OK if PluginExporter.test_package(positional_args[0], refresh_flag, local_flag, reporter) else ExitCode.FAIL

@@ -12,7 +12,7 @@ func get_direct_dependencies(file_path:String) -> Dictionary:
 func _read_script_class(file_path:String) -> void:
 	var file_access = FileAccess.open(file_path, FileAccess.READ)
 	if not file_access:
-		printerr("Could not open file: %s" % file_path)
+		export_obj.reporter.error("Could not open file: %s" % file_path)
 		return
 	var line = file_access.get_line()
 	if line.find("[gd_resource") == -1 or line.find(' script_class="') == -1:

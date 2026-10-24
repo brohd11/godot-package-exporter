@@ -51,7 +51,7 @@ func pre_export():
 		
 		var file = FileAccess.open(file_path, FileAccess.READ)
 		if not file:
-			printerr("Could not read file: %s" % file_path)
+			export_obj.reporter.error("Could not read file: %s" % file_path)
 			continue
 		
 		var content = file.get_as_text()
@@ -95,7 +95,7 @@ func pre_export():
 					if preload_alias_map.has(path):
 						var nm = preload_alias_map.get(path)
 						if nm != const_name:
-							printerr("Preload name clash for static var backport: %s, aliases: %s, %s" % [path, nm, const_name])
+							export_obj.reporter.error("Preload name clash for static var backport: %s, aliases: %s, %s" % [path, nm, const_name])
 							continue
 					
 					preload_alias_map[path] = const_name

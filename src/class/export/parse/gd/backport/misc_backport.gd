@@ -73,7 +73,7 @@ func _replace_misc_methods(line:String) -> String:
 		var replace_data = combined_string_replacements.get(_match_string, {})
 		var replacement = _match_string
 		if replace_data.is_empty():
-			print("Could not replace string: %s" % _match_string)
+			export_obj.reporter.warn("Could not replace string: %s" % _match_string)
 		else:
 			replacement = replace_data.get("replace")
 		

@@ -11,6 +11,7 @@ const UEditor = UtilsRemote.UEditor
 const UClassDetail = UtilsRemote.UClassDetail
 const ScanGD = UtilsRemote.DepScanner.ScanGD
 const DependencyTags = UtilsLocal.DependencyTags
+const Reporter = UtilsLocal.Reporter
 
 const Confirmation = UtilsRemote.Confirmation
 const ExportIgnore = preload("res://addons/package_exporter/src/class/export/export_ignore.gd")
@@ -26,20 +27,21 @@ static var string_maps = {}
 
 ## The plugin's export config in _export_ignore/ or export_ignore/, preferring the former. With
 ## none, where one would go - so "not found" messages point at a sensible path.
-static func get_export_config_path(addon_name:String):
+static func get_export_config_path(addon_name:String, reporter = null):
 	var plugin_dir = ExportPaths.resolve_target(addon_name)
 	if plugin_dir == "":
-		printerr("Invalid package target (expected a path inside this project): " + addon_name)
+		Reporter.or_default(reporter).error("Invalid package target (expected a path inside this project): " + addon_name)
 		return ""
 	return ExportIgnore.config_path(plugin_dir)
 
-static func get_export_data(export_config_path:String):
+static func get_export_data(export_config_path:String, reporter = null):
+	reporter = Reporter.or_default(reporter)
 	if not FileAccess.file_exists(export_config_path):
-		print("Export file path does not exist.")
+		reporter.error("Export file path does not exist: " + export_config_path)
 		return
 	var export_file = FileAccess.open(export_config_path, FileAccess.READ)
 	if export_file == null:
-		printerr("Error opening export configuration file: " + export_config_path)
+		reporter.error("Error opening export configuration file: " + export_config_path)
 		return
 	
 	var config_string = export_file.get_as_text()
@@ -47,41 +49,41 @@ static func get_export_data(export_config_path:String):
 		var json = JSON.new()
 		var parse_result = json.parse(config_string)
 		if parse_result != OK:
-			printerr("Package Exporter - Error parsing JSON: " + json.get_error_message() + " at line " + str(json.get_error_line()))
+			reporter.error("Package Exporter - Error parsing JSON: " + json.get_error_message() + " at line " + str(json.get_error_line()))
 			return
 		return json.data
 	elif export_config_path.get_extension() in ["yml", "yaml"]:
 		var parser = YAMLParser.new()
 		var err = parser.parse(config_string)
 		if err != OK:
-			printerr("Package Exporter - Error parsing YAML: " , err)
-			printerr(parser.errors)
+			reporter.error("Package Exporter - Error parsing YAML: %s %s" % [err, parser.errors])
 			return
 		return parser.data
 
 static func get_file_export_path(file_path:String, export_config_path:String, desired_export:int=-1, export_data:ExportData=null):
 	if not FileAccess.file_exists(file_path):
-		printerr("Package Exporter - File doesn't exist: %s" % file_path)
+		Reporter.or_default(export_data.reporter if export_data else null).error("Package Exporter - File doesn't exist: %s" % file_path)
 		return
 	if export_data == null:
 		export_data = ExportData.new(export_config_path)
+	var reporter = export_data.reporter
 	if not export_data.data_valid:
-		printerr("Issue with export data.")
+		reporter.error("Issue with export data.")
 		return
 	
 	var exports = export_data.exports
 	if exports.size() > 1 and desired_export == -1:
-		UEditor.print_warn("Multiple exports, defaulting to first.")
+		reporter.warn("Multiple exports, defaulting to first.")
 	if desired_export == -1:
 		desired_export = 0
 	if desired_export > exports.size() - 1:
-		printerr("Desired export index greater than exports in file.")
+		reporter.error("Desired export index greater than exports in file.")
 		return
 	
 	var export = exports[desired_export] as ExportData.Export
 	var local_path = ProjectSettings.localize_path(file_path)
 	if local_path not in export.valid_files_for_transfer.keys():
-		UEditor.print_warn("File path not a valid export: %s" % file_path)
+		reporter.warn("File path not a valid export: %s" % file_path)
 		return
 	else:
 		var export_file_data = export.valid_files_for_transfer.get(local_path)
@@ -89,7 +91,8 @@ static func get_file_export_path(file_path:String, export_config_path:String, de
 		return export_path
 
 
-static func get_version(folder, export_config_file):
+static func get_version(folder, export_config_file, reporter = null):
+	reporter = Reporter.or_default(reporter)
 	var target_folder = ExportPaths.resolve_target(folder)
 	var config_dir = export_config_file.get_base_dir()
 	var plugin_cfg_path = ""
@@ -99,17 +102,17 @@ static func get_version(folder, export_config_file):
 			break
 	
 	if plugin_cfg_path == "":
-		UEditor.push_toast("No package cfg (%s) in %s, Aborting." % ["/".join(PackageCfg.NAMES), target_folder], 2)
+		reporter.error("No package cfg (%s) in %s, Aborting." % ["/".join(PackageCfg.NAMES), target_folder], true)
 		return
 	
 	var plugin_data = UFile.load_config_file(plugin_cfg_path)
 	if not plugin_data:
-		UEditor.push_toast("Issue getting plugin data. Aborting.", 2)
+		reporter.error("Issue getting plugin data. Aborting.", true)
 		return 
 	return PackageCfg.get_value(plugin_data, "version", "No version")
 
 
-static func replace_version(input_text: String, export_config_file) -> String:
+static func replace_version(input_text: String, export_config_file, reporter = null) -> String:
 	var regex = RegEx.new()
 	var pattern = r"\{\{version=([^}]*)\}\}"
 	regex.compile(pattern)
@@ -117,7 +120,7 @@ static func replace_version(input_text: String, export_config_file) -> String:
 	var matches = regex.search_all(input_text)
 	matches.reverse()
 	for found in matches:
-		var version = get_version(found.get_string(1), export_config_file)
+		var version = get_version(found.get_string(1), export_config_file, reporter)
 		if not version:
 			return ""
 		input_text = input_text.substr(0, found.get_start()) + "-" + str(version) + input_text.substr(found.get_end())
@@ -128,7 +131,7 @@ static func replace_version(input_text: String, export_config_file) -> String:
 		var edited_slice
 		if slice.find("{{version}}") > -1:
 			var version_target = slice.replace("{{version}}", "")
-			var version = get_version(version_target, export_config_file)
+			var version = get_version(version_target, export_config_file, reporter)
 			if version:
 				version = "-" + version
 				edited_slice = slice.replace("{{version}}", version)
@@ -143,10 +146,10 @@ static func replace_version(input_text: String, export_config_file) -> String:
 	return output_text
 
 
-static func get_full_export_path(export_root, plugin_folder, export_config_path):
+static func get_full_export_path(export_root, plugin_folder, export_config_path, reporter = null):
 	export_root = ProjectSettings.globalize_path(export_root)
 	var full_export_path = export_root.path_join(plugin_folder)
-	full_export_path = replace_version(full_export_path, export_config_path)
+	full_export_path = replace_version(full_export_path, export_config_path, reporter)
 	if full_export_path == "":
 		return ""
 	if not full_export_path.ends_with("/"):
@@ -162,11 +165,11 @@ static func get_full_export_path(export_root, plugin_folder, export_config_path)
 
 ## An export's package folder under the full export path - the unit that gets zipped. Defaults to
 ## plugin_folder's last segment. Version resolved, trailing "/".
-static func get_export_name(export_entry:Dictionary, plugin_folder:String, export_config_path) -> String:
+static func get_export_name(export_entry:Dictionary, plugin_folder:String, export_config_path, reporter = null) -> String:
 	var export_name = String(export_entry.get(KeysConfig.Export.EXPORT_NAME, ""))
 	if export_name == "":
 		export_name = plugin_folder.trim_suffix("/").get_file()
-	return replace_version(export_name, export_config_path)
+	return replace_version(export_name, export_config_path, reporter)
 
 ## Where an export installs relative to res:// (e.g. "addons/my_plugin/" or "lib/my_lib/"),
 ## recreated as-is inside the package so it extracts straight into a project. Defaults to the
@@ -182,20 +185,21 @@ static func get_export_folder(export_entry:Dictionary, _export_config_path = nul
 
 
 static func run_export_script(script_path, func_name, export_data):
-	if not check_export_script_valid(script_path, func_name):
+	if not check_export_script_valid(script_path, func_name, export_data.reporter):
 		return
 	_run_export_script(script_path, func_name, export_data)
 
-static func check_export_script_valid(script_path, func_name):
+static func check_export_script_valid(script_path, func_name, reporter = null):
+	reporter = Reporter.or_default(reporter)
 	if not FileAccess.file_exists(script_path):
-		UEditor.push_toast("%s script file not found." % func_name, 2)
+		reporter.error("%s script file not found." % func_name, true)
 		return false
 	var loaded_script = load(script_path)
 	var script_ins = loaded_script.new()
 	var script_valid = script_ins.has_method(func_name)
 	script_ins.queue_free()
 	if not script_valid:
-		UEditor.push_toast("Export script does not have method: %s." % func_name, 2)
+		reporter.error("Export script does not have method: %s." % func_name, true)
 		return false
 	return true
 
@@ -263,24 +267,24 @@ static func get_other_transfer_data(export_obj:ExportData.Export) -> Array:
 					var path = dir.path_join(f) if f.is_relative_path() else f
 					pairs.append([path, to.path_join(path.trim_prefix(dir))])
 			else:
-				printerr("Path not file or dir: %s" % from_files)
+				export_obj.reporter.error("Path not file or dir: %s" % from_files)
 				export_obj.invalidate()
 				return []
 		elif from_files is Array:
 			for file in from_files:
 				if not FileAccess.file_exists(file):
-					printerr("File doesn't exist, aborting: %s" % file)
+					export_obj.reporter.error("File doesn't exist, aborting: %s" % file)
 					export_obj.invalidate()
 					return []
 				pairs.append([file, to.path_join(file.get_file())])
 		else:
-			printerr("Issues with other transfers, destination: %s" % to)
+			export_obj.reporter.error("Issues with other transfers, destination: %s" % to)
 			export_obj.invalidate()
 			return []
 
 		for pair in pairs:
 			if seen.has(pair[1]):
-				printerr("Error with other transfers, %s and %s both export to: %s" % [seen[pair[1]], pair[0], pair[1]])
+				export_obj.reporter.error("Error with other transfers, %s and %s both export to: %s" % [seen[pair[1]], pair[0], pair[1]])
 				export_obj.invalidate()
 				return []
 			seen[pair[1]] = pair[0]
@@ -346,20 +350,20 @@ static func get_remote_extends_path(file_path:String, export_obj:ExportData.Expo
 			remote_file_path = remote_file_path.get_slice('"', 0)
 			if not remote_file_path.is_absolute_path():
 				var absolute = export_obj.ensure_absolute_path(remote_file_path, file_path)
-				print("Not absolute path: %s -> %s" % [remote_file_path, absolute])
+				export_obj.reporter.info("Not absolute path: %s -> %s" % [remote_file_path, absolute])
 				remote_file_path = absolute
 
 			if FileAccess.file_exists(remote_file_path):
 				return remote_file_path
-			printerr("Extended file could not be found: %s" % remote_file_path)
+			export_obj.reporter.error("Extended file could not be found: %s" % remote_file_path)
 			return ""
 
 	return ""
 
 
 
-static func get_global_classes_in_file(file_path:String, global_class_dict:Dictionary):
-	var class_data = _get_global_classes_in_file(file_path, global_class_dict)
+static func get_global_classes_in_file(file_path:String, global_class_dict:Dictionary, reporter = null):
+	var class_data = _get_global_classes_in_file(file_path, global_class_dict, reporter)
 	class_data.erase("global_class_definition")
 	return class_data.keys()
 
@@ -371,10 +375,10 @@ static func get_global_classes_in_file_text(text:String, global_class_dict:Dicti
 	class_data.erase("global_class_definition")
 	return class_data.keys()
 
-static func _get_global_classes_in_file(file_path:String, global_class_dict:Dictionary):
+static func _get_global_classes_in_file(file_path:String, global_class_dict:Dictionary, reporter = null):
 	var file_access = FileAccess.open(file_path, FileAccess.READ)
 	if not file_access:
-		printerr("Could not open file: %s" % file_path)
+		Reporter.or_default(reporter).error("Could not open file: %s" % file_path)
 		return {}
 	return _get_global_classes_in_text(file_access.get_as_text(), global_class_dict)
 
@@ -465,13 +469,13 @@ static func get_global_singleton_module_scripts():
 			valid.append(path)
 	return valid
 
-static func is_singleton_module_script(file_path:String):
+static func is_singleton_module_script(file_path:String, reporter = null):
 	if not file_path.get_extension() == "gd": return false
 	var singleton_scripts = ["singleton_base.gd", "singleton_ref_count.gd"]
 	if file_path.get_file() in singleton_scripts:
 		return false
 	if not FileAccess.file_exists(file_path):
-		printerr("Could not find file: ", file_path)
+		Reporter.or_default(reporter).error("Could not find file: %s" % file_path)
 		return false
 	var script = load(file_path) as GDScript
 	var base_type = script.get_base_script()

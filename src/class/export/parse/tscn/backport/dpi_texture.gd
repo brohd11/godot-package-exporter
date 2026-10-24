@@ -85,7 +85,7 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null) -> Variant
 			svg_file.store_string(svg_source)
 			svg_file.close()
 		else:
-			printerr("Failed to write SVG file: ", svg_output_path)
+			export_obj.reporter.error("Failed to write SVG file: %s" % svg_output_path)
 			return file_lines
 		
 		var new_id_suffix = hash.substr(0, 5)

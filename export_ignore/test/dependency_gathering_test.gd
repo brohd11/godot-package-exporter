@@ -271,6 +271,7 @@ static func _test_other_transfers() -> void:
 	export = _transfer([{Keys.FROM: top, Keys.TO: "same.gd"}, {Keys.FROM: nested, Keys.TO: "same.gd"}])
 	_check("shared destination aborts", export.export_valid, false)
 	_check("shared destination not copied", export.valid_files_for_transfer.is_empty(), true)
+	_check("shared destination reported", export.reporter.count(UtilsLocal.Reporter.Level.ERROR), 1)
 
 
 static func _transfer(transfers:Array, classes:Dictionary = {}):

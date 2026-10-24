@@ -10,6 +10,7 @@ const UFile = UtilsRemote.UFile
 
 const ExportData = UtilsLocal.ExportData
 const FileParser = UtilsLocal.FileParser
+const Reporter = UtilsLocal.Reporter
 
 static func get_export_config_by_name(plugin_dir_name:String) -> String:
 	return UtilsLocal.ExportFileUtils.get_export_config_path(plugin_dir_name)
@@ -22,47 +23,59 @@ static func get_export_data_by_name(plugin_dir_name:String) -> ExportData:
 	return export_data
 
 static func export_by_gui(export_config_path:String, include_uid_overide=null, include_import_overide=null):
-	var success = export_plugin(export_config_path, include_uid_overide, include_import_overide)
+	var reporter = Reporter.new()
+	var success = export_plugin(export_config_path, include_uid_overide, include_import_overide, reporter)
 	
-	_print_result(success, export_config_path)
+	_print_result(success, export_config_path, reporter)
 
 
-static func export_by_name(plugin_dir_name):
-	var export_config_path = UtilsLocal.ExportFileUtils.get_export_config_path(plugin_dir_name)
+static func export_by_name(plugin_dir_name, reporter = null):
+	reporter = Reporter.or_default(reporter)
+	var export_config_path = UtilsLocal.ExportFileUtils.get_export_config_path(plugin_dir_name, reporter)
 	if not FileAccess.file_exists(export_config_path):
-		printerr("Plugin Export config not found at: %s" % plugin_dir_name)
+		reporter.error("Plugin Export config not found at: %s" % plugin_dir_name)
 		return false
-	var success = export_plugin(export_config_path)
+	var success = export_plugin(export_config_path, null, null, reporter)
 
-	_print_result(success, export_config_path)
+	_print_result(success, export_config_path, reporter)
 	return success
 
 
-static func _print_result(success:bool, export_config_path:String):
-	var plugin_dir = export_config_path.get_base_dir().get_base_dir()
-	var plugin_dir_name = plugin_dir.get_file()
-	var plugin_version = ExportFileUtils.get_version(plugin_dir, export_config_path)
-	var plugin_name = "%s - %s" % [plugin_dir_name.capitalize(), plugin_version] 
+static func _print_result(success:bool, export_config_path:String, reporter):
+	var plugin_name = _plugin_label(export_config_path, reporter)
 	var accent_color = EditorInterface.get_editor_theme().get_color("accent_color", &"Editor").to_html()
+	var details = []
+	if success and reporter.stats.has("files"):
+		details.append("%d files (%d external)" % [reporter.stats.files, reporter.stats.external])
+	var warnings = reporter.count(Reporter.Level.WARN)
+	var errors = reporter.count(Reporter.Level.ERROR)
+	if warnings:
+		details.append("%d warning%s" % [warnings, "" if warnings == 1 else "s"])
+	if errors:
+		details.append("%d error%s" % [errors, "" if errors == 1 else "s"])
+	var suffix = (": " + ", ".join(details)) if not details.is_empty() else ""
 	if success:
-		print_rich("'[color=%s]%s[/color]' [color=25c225]exported[/color]" % [accent_color, plugin_name])
+		reporter.note("'[color=%s]%s[/color]' [color=25c225]exported[/color]%s" % [accent_color, plugin_name, suffix])
 	else:
-		print_rich("'[color=%s]%s[/color]' [color=b20f0f]export failed[/color]" % [accent_color, plugin_name])
+		reporter.note("'[color=%s]%s[/color]' [color=b20f0f]export failed[/color]%s" % [accent_color, plugin_name, suffix])
 
 
-static func export_plugin(export_config_path:String, include_uid_overide=null, include_import_overide=null):
+static func _plugin_label(export_config_path:String, reporter) -> String:
 	var plugin_dir = export_config_path.get_base_dir().get_base_dir()
-	var plugin_dir_name = plugin_dir.get_file()
-	var plugin_version = ExportFileUtils.get_version(plugin_dir, export_config_path)
-	var plugin_name = "%s - %s" % [plugin_dir_name.capitalize(), plugin_version] 
-	print("Exporting: %s" % plugin_name)
+	var plugin_version = ExportFileUtils.get_version(plugin_dir, export_config_path, reporter)
+	return "%s - %s" % [plugin_dir.get_file().capitalize(), plugin_version]
+
+
+static func export_plugin(export_config_path:String, include_uid_overide=null, include_import_overide=null, reporter = null):
+	reporter = Reporter.or_default(reporter)
+	reporter.note("Exporting: %s" % _plugin_label(export_config_path, reporter))
 	
-	var export_data = ExportData.new(export_config_path)
+	var export_data = ExportData.new(export_config_path, reporter)
 	if not export_data.data_valid:
 		return false
 	
 	if export_data.pre_script != "":
-		if not ExportFileUtils.check_export_script_valid(export_data.pre_script, "pre_export"):
+		if not ExportFileUtils.check_export_script_valid(export_data.pre_script, "pre_export", reporter):
 			return false
 		ExportFileUtils.run_export_script(export_data.pre_script, "pre_export", export_data)
 	
@@ -72,7 +85,7 @@ static func export_plugin(export_config_path:String, include_uid_overide=null, i
 	var options = export_data.options
 	var overwrite = options.get(KeysConfig.Options.OVERWRITE, false)
 	if overwrite:
-		var cleared = _clear_export_dir(full_export_path)
+		var cleared = _clear_export_dir(full_export_path, reporter)
 		if not cleared:
 			return false
 	
@@ -83,19 +96,21 @@ static func export_plugin(export_config_path:String, include_uid_overide=null, i
 	
 	if include_uid_overide != null:
 		if include_uid != include_uid_overide:
-			print("Overiding 'Include UID': %s -> %s" % [include_uid_overide, not include_uid_overide])
+			reporter.info("Overiding 'Include UID': %s -> %s" % [include_uid_overide, not include_uid_overide])
 		include_uid = include_uid_overide
 	if include_import_overide != null:
 		if include_import != include_import_overide:
-			print("Overiding 'Include Import': %s -> %s" % [include_import_overide, not include_import_overide])
+			reporter.info("Overiding 'Include Import': %s -> %s" % [include_import_overide, not include_import_overide])
 		include_import = include_import_overide
 	
 	export_data.include_uid = include_uid
 	export_data.include_import = include_import
 	
 	var count = 0
+	var files = 0
+	var external = 0
 	for export:ExportData.Export in export_data.exports:
-		print("Exporting: export %s" % count)
+		reporter.info("Exporting: export %s" % count)
 		export.file_parser.set_export_obj(export)
 		export.file_parser.pre_export()
 		if not export.export_valid:
@@ -107,6 +122,11 @@ static func export_plugin(export_config_path:String, include_uid_overide=null, i
 		export.write_export_data_file()
 		export.update_plugin_cfg()
 		count += 1
+		files += export.files_to_copy.size()
+		for path:String in export.files_to_copy:
+			if not UFile.is_file_in_directory(path, export.source):
+				external += 1
+	reporter.stats = {"files": files, "external": external}
 	
 	if export_data.post_script != "":
 		ExportFileUtils.run_export_script(export_data.post_script, "post_export", export_data)
@@ -125,7 +145,7 @@ static func export_plugin(export_config_path:String, include_uid_overide=null, i
 		if not FileAccess.file_exists(gdignore_path):
 			var file = FileAccess.open(gdignore_path, FileAccess.WRITE)
 			file.close()
-			print("Created .gdignore for in-resource file system export.")
+			reporter.info("Created .gdignore for in-resource file system export.")
 	
 	
 	# moved to the export ignore folder, just ignoring all exports now
@@ -140,13 +160,12 @@ static func export_plugin(export_config_path:String, include_uid_overide=null, i
 	
 
 
-static func _clear_export_dir(full_export_path):
+static func _clear_export_dir(full_export_path, reporter = null):
 	var forbidden_paths = ["res://", "res://addons"]
 	for dir in forbidden_paths:
 		if full_export_path == dir:
-			printerr("Could not clear export dir: %s" % full_export_path)
-			printerr("This is so project files are not deleted.")
-			printerr("Recommended location: res://addons/my_plugin/_export_ignore/exports")
+			Reporter.or_default(reporter).error(("Could not clear export dir: %s, so project files are not deleted. "
+				+ "Recommended location: res://addons/my_plugin/_export_ignore/exports") % full_export_path)
 			return false
 	
 	if not DirAccess.dir_exists_absolute(full_export_path):
@@ -178,15 +197,16 @@ static func _clear_export_dir(full_export_path):
 static func update_git_submodule_details(export_config_path, export_data:ExportData=null):
 	#var check_exit = OS.execute("git", ["--version"])
 	if OS.execute("git", ["--version"]) != 0:
-		print("Error accessing git. Skipping git export details file.")
+		Reporter.or_default(export_data.reporter if export_data else null).info("Error accessing git. Skipping git export details file.")
 		return
 	
 	if export_data == null:
 		export_data = ExportData.new(export_config_path)
+	var reporter = export_data.reporter
 	var git_details_file_lines = []
 	var main_repo_path = "res://.git"
 	if DirAccess.dir_exists_absolute(main_repo_path):
-		var main_repo_lines = _get_git_data("res://", git_details_file_lines, "Main Repo")
+		var main_repo_lines = _get_git_data("res://", git_details_file_lines, "Main Repo", reporter)
 		if main_repo_lines:
 			var i = 0
 			for line in main_repo_lines:
@@ -201,11 +221,11 @@ static func update_git_submodule_details(export_config_path, export_data:ExportD
 		git_details_file_lines.append("\nExport: " + export.export_name.path_join(export.export_folder))
 		var source_git_path = export.source.path_join(".git")
 		if FileAccess.file_exists(source_git_path):
-			var lines = _get_git_data(export.source, single_export_git_file_lines)
+			var lines = _get_git_data(export.source, single_export_git_file_lines, "Submodule", reporter)
 			if lines:
 				single_export_git_file_lines.append_array(lines)
 		elif DirAccess.dir_exists_absolute(source_git_path):
-			var lines = _get_git_data(export.source, single_export_git_file_lines)
+			var lines = _get_git_data(export.source, single_export_git_file_lines, "Submodule", reporter)
 			if lines:
 				single_export_git_file_lines.append_array(lines)
 		else:
@@ -217,12 +237,12 @@ static func update_git_submodule_details(export_config_path, export_data:ExportD
 			while dir != "res://":
 				var git_path = dir.path_join(".git")
 				if FileAccess.file_exists(git_path):
-					var lines = _get_git_data(dir, single_export_git_file_lines)
+					var lines = _get_git_data(dir, single_export_git_file_lines, "Submodule", reporter)
 					if lines:
 						single_export_git_file_lines.append_array(lines)
 					break
 				elif DirAccess.dir_exists_absolute(git_path):
-					var lines = _get_git_data(dir, single_export_git_file_lines)
+					var lines = _get_git_data(dir, single_export_git_file_lines, "Submodule", reporter)
 					if lines:
 						single_export_git_file_lines.append_array(lines)
 					break
@@ -245,7 +265,8 @@ static func update_git_submodule_details(export_config_path, export_data:ExportD
 		file.close()
 		
 
-static func _get_git_data(dir, git_file_lines, repo_type="Submodule"):
+static func _get_git_data(dir, git_file_lines, repo_type="Submodule", reporter = null):
+	reporter = Reporter.or_default(reporter)
 	var global_dir = ProjectSettings.globalize_path(dir)
 	global_dir = global_dir.trim_suffix("/")
 	var repo_line = "\t%s: %s" % [repo_type, global_dir.get_file()]
@@ -254,11 +275,11 @@ static func _get_git_data(dir, git_file_lines, repo_type="Submodule"):
 	
 	var rev_parse = ExportFileUtils.run_git_exec(dir, ["rev-parse", "HEAD"])
 	if rev_parse.exit == -1:
-		printerr("Error getting commit: %s" % dir)
+		reporter.error("Error getting commit: %s" % dir)
 		return
 	var commit = rev_parse.output[0].strip_edges()
 	if commit == "":
-		printerr("Error getting commit: %s" % dir)
+		reporter.error("Error getting commit: %s" % dir)
 		return []
 	
 	var describe = ExportFileUtils.run_git_describe(dir)

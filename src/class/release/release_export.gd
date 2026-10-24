@@ -8,6 +8,7 @@ const UtilsLocal = preload("res://addons/package_exporter/src/class/utils_local.
 const UtilsRemote = preload("res://addons/package_exporter/src/class/utils_remote.gd")
 const ExportFileUtils = UtilsLocal.ExportFileUtils
 const ExportPaths = ExportFileUtils.ExportPaths
+const Reporter = UtilsLocal.Reporter
 
 const DepResolver = preload("res://addons/package_exporter/src/class/release/dep_resolver.gd")
 const RepoCache = preload("res://addons/package_exporter/src/class/release/repo_cache.gd")
@@ -25,24 +26,26 @@ const GIT_DETAILS_FILE = ".export_git_details"
 const UNVERIFIED_SUFFIX = "-unverified"
 const TOOLCHAIN_SCRIPTS = "res://addons/package_exporter/src/class/"
 
-## Failure lines from the last export_release call, for callers that don't see the Output log.
-static var messages:Array[String] = []
+## The running export_release call's reporter (the caller's, so a console can sink it live). Null
+## between calls: kept past one, its sink would live until static teardown and crash the exit.
+static var reporter: Reporter
 ## Zips the last successful export_release produced, for callers that publish them (release_cli.gd).
 static var zips:Array[String] = []
 
 
 ## `local` fetches every repo checked out in this project from that checkout rather than its
 ## remote - still by tag, so nothing uncommitted gets in, but nothing has to be pushed either.
-static func export_release(plugin_name:String, refresh:bool = false, local:bool = false) -> bool:
-	messages.clear()
+static func export_release(plugin_name:String, refresh:bool = false, local:bool = false, _reporter = null) -> bool:
+	reporter = Reporter.or_default(_reporter)
 	zips.clear()
 	var started = Time.get_ticks_msec()
 	var ok = _export_release(plugin_name, refresh, local)
 	var seconds = (Time.get_ticks_msec() - started) / 1000.0
 	if ok:
-		print_rich("'%s' [color=25c225]release exported and verified[/color] (%.1fs)" % [plugin_name, seconds])
+		reporter.note("'%s' [color=25c225]release exported and verified[/color] (%.1fs)" % [plugin_name, seconds])
 	else:
-		print_rich("'%s' [color=b20f0f]release export failed[/color] (%.1fs)" % [plugin_name, seconds])
+		reporter.note("'%s' [color=b20f0f]release export failed[/color] (%.1fs)" % [plugin_name, seconds])
+	reporter = null
 	return ok
 
 
@@ -50,7 +53,7 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 	var dev_dir = ExportPaths.resolve_target(plugin_name)
 	if dev_dir == "":
 		return _fail("Invalid package target (expected a path inside this project): " + plugin_name)
-	var config_path = ExportFileUtils.get_export_config_path(plugin_name)
+	var config_path = ExportFileUtils.get_export_config_path(plugin_name, reporter)
 	if not FileAccess.file_exists(config_path):
 		return _fail("no export config at " + config_path)
 	var version = _cfg_version(dev_dir)
@@ -60,7 +63,7 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 	if url == "":
 		return _fail("%s has no origin remote; release exports fetch the target by tag from it" % dev_dir)
 
-	print("Release export: resolving %s %s" % [plugin_name, version])
+	reporter.info("Release export: resolving %s %s" % [plugin_name, version])
 	var cache = RepoCache.new("", refresh)
 	var fetcher = PackageFetcher.new(cache, ReleaseCache.new(cache.root, refresh))
 	var dev_repos = DepResolver.scan_dev_repos()
@@ -81,11 +84,11 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 		lock.local = true
 		_warn_unpushed(lock, dev_repos)
 
-	var config = ExportFileUtils.get_export_data(config_path)
+	var config = ExportFileUtils.get_export_data(config_path, reporter)
 	if not config is Dictionary:
 		return false
 	var options = config.get("options", {})
-	_print_lock(lock)
+	_print_lock(lock, reporter)
 	_warn_unexported_peers(config)
 
 	# Recorded in the lock before the workspace is keyed on it, so a new toolchain gets a new one.
@@ -99,7 +102,7 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 			return false
 		toolchain = info.dir
 		lock.toolchain = {"version": info.version, "source": info.source, "id": info.id}
-		print("  toolchain %s %s (%s)" % [Toolchain.NAME, info.version, info.source])
+		reporter.info("  toolchain %s %s (%s)" % [Toolchain.NAME, info.version, info.source])
 	# Also keys the workspace: its .godot import cache belongs to one engine.
 	lock.godot = Engine.get_version_info().string
 
@@ -111,11 +114,11 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 		for e in workspace.errors:
 			_note("  " + e)
 		return false
-	var engine_err = engine_error(ws)
+	var engine_err = engine_error(ws, reporter)
 	if engine_err != "":
 		return _fail(engine_err)
 
-	print("Release export: exporting in " + ws)
+	reporter.info("Release export: exporting in " + ws)
 	var target_dir = ws.path_join(String(lock.target.path).trim_prefix("res://"))
 	var workspace_config = ExportFileUtils.ExportIgnore.config_path(target_dir)
 	var config_resource = "res://" + workspace_config.trim_prefix(ws.trim_suffix("/") + "/")
@@ -130,7 +133,7 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 	if run.result.is_empty() or not run.result.get("ok", false):
 		var errs = ReleaseRunner.script_errors(run.output)
 		if errs.is_empty():
-			printerr(run.output.right(4000))
+			_note(run.output.right(4000))
 		for e in errs.slice(0, 12):
 			_note("  " + e)
 		return _fail("export in workspace failed (exit %d): %s" % [run.exit, run.result.get("error", "see output above")])
@@ -140,7 +143,7 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 		_finalize_export_dir(e.dir, lock)
 	var written = _rezip(full_export_path)
 
-	print("Release export: verifying")
+	reporter.info("Release export: verifying")
 	# compile_require deps (and what they need) sit beside the export, as they would when installed.
 	var verify_installs = {}
 	for entry in lock.deps:
@@ -173,11 +176,12 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool) -> boo
 ## Scans the workspace's sources (target and deps, not the toolchain) against the API index before
 ## its Godot run: an older engine fails to parse newer syntax on import and drops those classes
 ## quietly. Returns why this engine can't, or "".
-static func engine_error(ws:String) -> String:
+static func engine_error(ws:String, _reporter = null) -> String:
+	var out = Reporter.or_default(_reporter)
 	var scanner = VersionScanner.new()
 	scanner.load_scripts = false
 	if not scanner.api.has_index():
-		print("  no min_version API index; skipping the engine check")
+		out.warn("no min_version API index; skipping the engine check")
 		return ""
 	var search = UtilsRemote.GetFiles.open(ws)
 	search.file_extensions = ["gd", "tscn", "tres"]
@@ -188,7 +192,7 @@ static func engine_error(ws:String) -> String:
 		f.location = String(f.location).trim_prefix(ws.trim_suffix("/") + "/")
 	var err = engine_check(scan.min_version, scan.findings, Engine.get_version_info())
 	if err == "":
-		print("  sources need Godot %s" % scan.min_version)
+		out.info("  sources need Godot %s" % scan.min_version)
 	return err
 
 
@@ -210,15 +214,15 @@ static func engine_check(min_version:String, findings:Array, engine:Dictionary) 
 ## Where this project exports package_exporter, for --local toolchains. Computed with the export
 ## pipeline (it resolves {{version}} templates), so it stays here rather than in Toolchain.
 static func _local_toolchain_dir() -> String:
-	var config_path = ExportFileUtils.get_export_config_path(Toolchain.NAME)
+	var config_path = ExportFileUtils.get_export_config_path(Toolchain.NAME, reporter)
 	if not FileAccess.file_exists(config_path):
 		return ""
-	var data = ExportFileUtils.get_export_data(config_path)
+	var data = ExportFileUtils.get_export_data(config_path, reporter)
 	if not data is Dictionary or data.get("exports", []).is_empty():
 		return ""
 	var entry = data.exports[0]
-	var full = ExportFileUtils.get_full_export_path(data.export_root, data.plugin_folder, config_path)
-	var package = full.path_join(ExportFileUtils.get_export_name(entry, data.plugin_folder, config_path))
+	var full = ExportFileUtils.get_full_export_path(data.export_root, data.plugin_folder, config_path, reporter)
+	var package = full.path_join(ExportFileUtils.get_export_name(entry, data.plugin_folder, config_path, reporter))
 	return package.path_join(ExportFileUtils.get_export_folder(entry, config_path)).trim_suffix("/")
 
 
@@ -258,14 +262,14 @@ static func _cfg_version(dir:String) -> String:
 	return str(DepResolver.PackageCfg.dir_value(dir, "version", ""))
 
 
-static func _print_lock(lock:Dictionary) -> void:
+static func _print_lock(lock:Dictionary, out) -> void:
 	for entry in [lock.target] + lock.deps:
 		var role = "target" if entry == lock.target else ("test" if entry.get("test", false) \
 				else ("compile" if entry.get("verify", false) else "bundled"))
 		var fetched = entry.get("kind", "source")
 		if entry.get("asset", "") != "":
 			fetched += " " + entry.asset
-		print("  %-8s %-6s %s %s [%s] (%s) -> %s" % [role, entry.get("source", ""), entry.repo_id, entry.tag,
+		out.info("  %-8s %-6s %s %s [%s] (%s) -> %s" % [role, entry.get("source", ""), entry.repo_id, entry.tag,
 			fetched, entry.sha.substr(0, 7), entry.path])
 
 
@@ -282,7 +286,7 @@ static func _warn_unexported_peers(config:Dictionary) -> void:
 	for spec in (compile if compile is Array else [compile]):
 		var dep = DepResolver.parse_dep(str(spec))
 		if dep != null and not exported.has(dep.repo_id):
-			print_rich("[color=e0b000]Release export: %s is a compile_require but not in exported_require; installs of this release won't get it[/color]" % dep.repo_id)
+			reporter.warn("Release export: %s is a compile_require but not in exported_require; installs of this release won't get it" % dep.repo_id)
 
 
 ## A local build is fine to try, but one others can't reproduce shouldn't pass silently - nor should
@@ -290,18 +294,18 @@ static func _warn_unexported_peers(config:Dictionary) -> void:
 static func _warn_unpushed(lock:Dictionary, dev_repos:Dictionary) -> void:
 	for entry in [lock.target] + lock.deps:
 		if entry.get("kind") == "release":
-			print_rich("[color=e0b000]Release export: %s %s is a release asset (%s), fetched from GitHub[/color]" % [entry.repo_id, entry.tag, entry.asset])
+			reporter.warn("Release export: %s %s is a release asset (%s), fetched from GitHub" % [entry.repo_id, entry.tag, entry.asset])
 			continue
 		if entry.get("source") != "local":
-			print_rich("[color=e0b000]Release export: %s %s has no local checkout with a matching origin; fetched from its remote[/color]" % [entry.repo_id, entry.tag])
+			reporter.warn("Release export: %s %s has no local checkout with a matching origin; fetched from its remote" % [entry.repo_id, entry.tag])
 			continue
 		var output = []
 		var dir = ProjectSettings.globalize_path(dev_repos[entry.repo_id])
 		var code = OS.execute("git", ["-C", dir, "ls-remote", "--tags", "origin", "refs/tags/" + entry.tag], output)
 		if code != 0:
-			print_rich("[color=e0b000]Release export: couldn't check origin for %s %s[/color]" % [entry.repo_id, entry.tag])
+			reporter.warn("Release export: couldn't check origin for %s %s" % [entry.repo_id, entry.tag])
 		elif "".join(output).strip_edges() == "":
-			print_rich("[color=e0b000]Release export: %s %s is not on origin yet[/color]" % [entry.repo_id, entry.tag])
+			reporter.warn("Release export: %s %s is not on origin yet" % [entry.repo_id, entry.tag])
 
 
 static func _fail(message:String) -> bool:
@@ -309,7 +313,5 @@ static func _fail(message:String) -> bool:
 	return false
 
 
-## printerr, and kept in `messages` so the console command can show why - Output alone is easy to miss.
 static func _note(line:String) -> void:
-	printerr(line)
-	messages.append(line)
+	reporter.error(line)

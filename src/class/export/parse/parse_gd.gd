@@ -92,7 +92,7 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null):
 				extend_file_path = extend_file_path.get_slice('"', 0)
 				extend_file_path = export_obj.ensure_absolute_path(extend_file_path, file_path)
 				if not FileAccess.file_exists(extend_file_path):
-					printerr("Could not find extended file in line: %s" % line)
+					export_obj.reporter.error("Could not find extended file in line: %s" % line)
 				
 				var inherited_used_classes = _recursive_get_globals(extend_file_path)
 				classes_preloaded.append_array(inherited_used_classes)
@@ -104,7 +104,7 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null):
 				var global_class = comment_stripped.get_slice("extends ", 1) # ""
 				global_class = global_class.strip_edges()
 				if global_class.find(" ") > -1: #^c what is this for?
-					printerr("GETTING SPACE GLOBAL CLASS")
+					export_obj.reporter.info("extends has trailing text, using its first word: %s" % line)
 					global_class = global_class.get_slice(" ", 0)
 				if export_obj.export_data.class_list.has(global_class):
 					var path = export_obj.export_data.class_list.get(global_class)
@@ -187,7 +187,7 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null):
 			# An ignore_deps file may name classes from plugins it only optionally integrates with.
 			if export_obj.file_deps_ignored(export_obj.file_parser.current_file_path_parsing):
 				continue
-			printerr('Class "%s" is used in %s but was not copied into the export - cannot inject its preload.'
+			export_obj.reporter.error('Class "%s" is used in %s but was not copied into the export - cannot inject its preload.'
 				% [name, file_path])
 			continue
 		#if use_relative_paths:
@@ -407,10 +407,10 @@ func _update_paths(line:String):
 	return line
 
 func get_global_class_in_file_data(file_path:String):
-	return ExportFileUtils._get_global_classes_in_file(file_path, export_obj.export_data.class_list)
+	return ExportFileUtils._get_global_classes_in_file(file_path, export_obj.export_data.class_list, export_obj.reporter)
 
 func get_global_classes_in_file(file_path:String) -> Array:
-	var global_classes_in_files = ExportFileUtils._get_global_classes_in_file(file_path, export_obj.export_data.class_list)
+	var global_classes_in_files = ExportFileUtils._get_global_classes_in_file(file_path, export_obj.export_data.class_list, export_obj.reporter)
 	global_classes_in_files.erase("global_class_definition")
 	return global_classes_in_files.keys()
 

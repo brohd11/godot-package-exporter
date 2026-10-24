@@ -15,12 +15,13 @@ const PackageFetcher = ReleaseExport.PackageFetcher
 const ExportFileUtils = ReleaseExport.ExportFileUtils
 const ExportPaths = ReleaseExport.ExportPaths
 const ExportIgnore = ExportFileUtils.ExportIgnore
+const Reporter = ReleaseExport.Reporter
 
 const TEST_DIR = "test"
 const SKIP_PREFIX = "SKIP:"
 
-## Failure lines from the last test_package call.
-static var messages:Array[String] = []
+## The running test_package call's reporter; null between calls, see ReleaseExport.reporter.
+static var reporter: Reporter
 ## TestRunner's report from the last run that got as far as the suites, else {}.
 static var report:Dictionary = {}
 
@@ -28,16 +29,20 @@ static var report:Dictionary = {}
 ## `local` fetches deps checked out in this project from those checkouts, still by tag. `tree_dir`
 ## is the checkout to test when it isn't at the package's install path, as when CI tests
 ## package_exporter with a released one already installed there.
-static func test_package(plugin_name:String, refresh:bool = false, local:bool = false, tree_dir:String = "") -> bool:
-	messages.clear()
+static func test_package(plugin_name:String, refresh:bool = false, local:bool = false, tree_dir:String = "", _reporter = null) -> bool:
+	reporter = Reporter.or_default(_reporter)
 	report = {}
 	var started = Time.get_ticks_msec()
 	var ok = _test_package(plugin_name, refresh, local, tree_dir)
 	var seconds = (Time.get_ticks_msec() - started) / 1000.0
+	var suites = ""
+	if not report.get("suites", []).is_empty():
+		suites = ", %d/%d suites passed" % [report.suites.size() - report.failed, report.suites.size()]
 	if ok:
-		print_rich("'%s' [color=25c225]tests passed against its requires[/color] (%.1fs)" % [plugin_name, seconds])
+		reporter.note("'%s' [color=25c225]tests passed against its requires[/color] (%.1fs%s)" % [plugin_name, seconds, suites])
 	else:
-		print_rich("'%s' [color=b20f0f]test CI failed[/color] (%.1fs)" % [plugin_name, seconds])
+		reporter.note("'%s' [color=b20f0f]test CI failed[/color] (%.1fs%s)" % [plugin_name, seconds, suites])
+	reporter = null
 	return ok
 
 
@@ -52,7 +57,7 @@ static func _test_package(plugin_name:String, refresh:bool, local:bool, tree_dir
 	if url == "":
 		return _fail("%s has no origin remote; it names the package, so deps requiring it resolve to it" % tree)
 
-	print("Test CI: resolving %s's requires" % plugin_name)
+	reporter.info("Test CI: resolving %s's requires" % plugin_name)
 	var cache = RepoCache.new("", refresh)
 	var fetcher = PackageFetcher.new(cache, ReleaseCache.new(cache.root, refresh))
 	var dev_repos = DepResolver.scan_dev_repos()
@@ -69,12 +74,12 @@ static func _test_package(plugin_name:String, refresh:bool, local:bool, tree_dir
 		for e in resolver.errors:
 			_note("  " + e)
 		return false
-	ReleaseExport._print_lock(lock)
+	ReleaseExport._print_lock(lock, reporter)
 
 	var options = {}
 	var config_path = ExportIgnore.config_path(tree)
 	if FileAccess.file_exists(config_path):
-		var config = ExportFileUtils.get_export_data(config_path)
+		var config = ExportFileUtils.get_export_data(config_path, reporter)
 		if config is Dictionary:
 			options = config.get("options", {})
 	var toolchain = ""
@@ -87,7 +92,7 @@ static func _test_package(plugin_name:String, refresh:bool, local:bool, tree_dir
 			return false
 		toolchain = info.dir
 		lock.toolchain = {"version": info.version, "source": info.source, "id": info.id}
-		print("  toolchain %s %s (%s)" % [Toolchain.NAME, info.version, info.source])
+		reporter.info("  toolchain %s %s (%s)" % [Toolchain.NAME, info.version, info.source])
 	lock.godot = Engine.get_version_info().string
 
 	var workspace = ReleaseWorkspace.new(fetcher)
@@ -97,20 +102,20 @@ static func _test_package(plugin_name:String, refresh:bool, local:bool, tree_dir
 		for e in workspace.errors:
 			_note("  " + e)
 		return false
-	var engine_err = ReleaseExport.engine_error(ws)
+	var engine_err = ReleaseExport.engine_error(ws, reporter)
 	if engine_err != "":
 		return _fail(engine_err)
 
 	var target_dir = ws.path_join(String(lock.target.path).trim_prefix("res://"))
 	var test_dir = ExportIgnore.dir_in(target_dir).path_join(TEST_DIR)
 	var test_res = "res://" + test_dir.trim_prefix(ws.trim_suffix("/") + "/")
-	print("Test CI: running %s in %s" % [test_res, ws])
+	reporter.info("Test CI: running %s in %s" % [test_res, ws])
 	var run = ReleaseRunner.run_tests(ws, test_res)
 	var script_errors = runtime_errors(run.output)
 	if run.result.is_empty() or not run.result.has("report"):
 		var errs = ReleaseRunner.script_errors(run.output)
 		if errs.is_empty() and script_errors.is_empty():
-			printerr(run.output.right(4000))
+			_note(run.output.right(4000))
 		for e in (errs + script_errors).slice(0, 12):
 			_note("  " + e)
 		return _fail("tests did not run to the end (exit %d): %s" % [run.exit, run.result.get("error", "see output above")])
@@ -123,26 +128,40 @@ static func _test_package(plugin_name:String, refresh:bool, local:bool, tree_dir
 			_note("  " + e)
 		return _fail("%d script error(s) while testing" % script_errors.size())
 	if not ok:
-		return _fail("%d suite(s) failed" % report.failed)
+		# no suites already said why
+		return false if report.suites.is_empty() else _fail("%d suite(s) failed" % report.failed)
 	return true
 
 
 ## PASS/FAIL per suite, full output only for failures. A pass still shows its "SKIP:" lines, so a
 ## suite that skipped part of itself (a missing optional backend) doesn't read as fully run.
+## Passes are INFO; failures, skips and invalid suites always show.
 static func _print_report(rep:Dictionary, test_dir:String) -> bool:
 	for suite in rep.suites:
 		var label = String(suite.path).trim_prefix("res://")
-		print("  [%s] %s" % ["PASS" if suite.passed else "FAIL", label])
+		var lines = []
 		for line in suite.output:
 			var text = str(line).strip_edges()
 			if not suite.passed or text.begins_with(SKIP_PREFIX):
-				print("      " + (text if suite.passed else str(line)))
+				lines.append("      " + (text if suite.passed else str(line)))
+		var header = "  [%s] %s" % ["PASS" if suite.passed else "FAIL", label]
+		if suite.passed and lines.is_empty():
+			reporter.info(header)
+			continue
+		reporter.note(_escape(header))
+		for line in lines:
+			reporter.note(_escape(line))
 	for path in rep.invalid:
-		print("  [----] %s (no run/run_test/run_tests)" % String(path).trim_prefix("res://"))
+		reporter.note(_escape("  [----] %s (no run/run_test/run_tests)" % String(path).trim_prefix("res://")))
 	if rep.suites.is_empty():
 		_note("  no *_test.gd suites in " + test_dir)
 		return false
 	return rep.failed == 0
+
+
+## Suite output is arbitrary text and notes are BBCode: "[PASS]" or a "[b]" in a report must print as-is.
+static func _escape(text:String) -> String:
+	return text.replace("[", "[lb]")
 
 
 ## Runtime "SCRIPT ERROR" lines, each with its "at:" line. Parse errors are ReleaseRunner.script_errors.
@@ -166,5 +185,4 @@ static func _fail(message:String) -> bool:
 
 
 static func _note(line:String) -> void:
-	printerr(line)
-	messages.append(line)
+	reporter.error(line)

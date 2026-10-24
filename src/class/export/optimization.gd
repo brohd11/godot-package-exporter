@@ -93,7 +93,7 @@ func pre_export() -> void:
 				pending[key] = result.lines
 	if errors.is_empty():
 		replacements = pending
-		print("Package Exporter - optimizer stats=" + JSON.stringify(stats))
+		export_obj.reporter.info("Package Exporter - optimizer stats=" + JSON.stringify(stats))
 	_report()
 
 
@@ -115,7 +115,7 @@ func _references(path:String) -> Array:
 		if edge.to != "":
 			paths.append(edge.to)
 	var classes:Dictionary = export_obj.export_data.class_list
-	var globals:Dictionary = ExportFileUtils._get_global_classes_in_file(path, classes)
+	var globals:Dictionary = ExportFileUtils._get_global_classes_in_file(path, classes, export_obj.reporter)
 	globals.erase("global_class_definition")
 	for name in globals:
 		if classes.has(name):
@@ -125,8 +125,8 @@ func _references(path:String) -> Array:
 
 func _report() -> void:
 	for warning in warnings:
-		UtilsRemote.UEditor.print_warn("Optimizer - " + warning)
+		export_obj.reporter.warn("Optimizer - " + warning)
 	for error in errors:
-		printerr("Package Exporter - optimizer - " + error)
+		export_obj.reporter.error("Package Exporter - optimizer - " + error)
 	if not errors.is_empty():
 		export_obj.invalidate()

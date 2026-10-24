@@ -15,6 +15,7 @@ var custom_parse_data:Dictionary = {}
 
 var default_parsers:Dictionary = {}
 var optimization
+var export_obj
 
 
 var current_file_path_parsing:String
@@ -80,7 +81,8 @@ func set_parser_settings(parser_settings):
 		for parse_ins in parse_ins_array:
 			parse_ins.set_parse_settings(settings)
 
-func set_export_obj(export_obj):
+func set_export_obj(_export_obj):
+	export_obj = _export_obj
 	optimization.export_obj = export_obj
 	for parser_ext in default_parsers.keys():
 		var parse_ins = default_parsers.get(parser_ext)
@@ -102,7 +104,7 @@ func get_dependencies(file_path:String, all_dependencies:Dictionary, scanned_fil
 		if scanned_files.has(current_file_path):
 			continue
 		scanned_files[current_file_path] = true
-		if optimization.export_obj.file_deps_ignored(current_file_path):
+		if export_obj.file_deps_ignored(current_file_path):
 			continue
 
 		var file_deps = {}
@@ -155,7 +157,7 @@ func post_export_edit_file(file_path:String):
 	
 	var file = FileAccess.open(file_path, FileAccess.READ)
 	if not file:
-		printerr("Could not open file: %s" % file_path)
+		export_obj.reporter.error("Could not open file: %s" % file_path)
 		return
 	var file_lines = []
 	while not file.eof_reached():

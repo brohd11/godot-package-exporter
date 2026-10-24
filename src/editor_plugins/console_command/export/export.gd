@@ -5,11 +5,12 @@ const PECommandUtils = preload("res://addons/package_exporter/src/editor_plugins
 
 const _HELP = \
 "Export the selected plugin
-Usage: package_exporter export [--release [--local] [--refresh]] <plugin_name>"
+Usage: package_exporter export [--verbose] [--release [--local] [--refresh]] <plugin_name>"
 
 var release_flag := false
 var refresh_flag := false
 var local_flag := false
+var verbose_flag := false
 
 static func get_command_name() -> String:
 	return "export"
@@ -25,6 +26,9 @@ func _get_completions(ctx:Completion):
 
 func _get_flags() -> Dictionary:
 	var options = Options.new()
+	options.add_option("--verbose", {
+		&"help": "Also show progress lines; warnings, errors and the result always show."
+	})
 	options.add_option("--release", {
 		&"help": "Export from the tags in plugin.cfg deps/require instead of the dev tree, then compile check."
 	})
@@ -43,15 +47,15 @@ func _process_flag(flag:String):
 		refresh_flag = true
 	elif flag == "--local":
 		local_flag = true
+	elif flag == "--verbose":
+		verbose_flag = true
 
 func _execute(ctx:Context):
 	var plugin_name = positional_args[0]
+	var reporter = PECommandUtils.console_reporter(ctx, verbose_flag)
 	var success
 	if release_flag:
-		success = PluginExporter.export_release(plugin_name, refresh_flag, local_flag)
-		if not success:
-			for line in load("res://addons/package_exporter/src/class/release/release_export.gd").messages:
-				ctx.append_error(line)
+		success = PluginExporter.export_release(plugin_name, refresh_flag, local_flag, reporter)
 	else:
-		success = PluginExporter.export(plugin_name)
+		success = PluginExporter.export(plugin_name, reporter)
 	return ExitCode.OK if success else ExitCode.FAIL
