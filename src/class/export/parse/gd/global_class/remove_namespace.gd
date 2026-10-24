@@ -17,4 +17,6 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null) -> Variant
 func post_export_edit_line(line:String) -> String:
 	if line.begins_with("#! namespace"):
 		line = ""
+	if line.begins_with("# This file is auto-generated. Do not edit."):
+		line = ""
 	return line
