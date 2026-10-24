@@ -1,6 +1,7 @@
 # Reusable release build for a PackageExporter package (callers come from add_release_workflow).
 # Builds the package from pinned tags with a released package_exporter as toolchain, compile-checks
-# the output on its own, then attaches the zips to the tag's GitHub release.
+# the output on its own, then attaches the zips to the tag's GitHub release. package_exporter itself
+# builds with its tag's own source; the released one only resolves and verifies.
 name: package-release
 
 on:
@@ -50,9 +51,13 @@ jobs:
         shell: bash
         env:
           PKG_PATH: ${{ steps.pkg.outputs.path }}
+          SELF: ${{ steps.pkg.outputs.self }}
         run: |
           set -euo pipefail
-          godot --headless --path "$WS" --script res://addons/package_exporter/src/class/release/release_cli.gd -- "$PKG_PATH" \
+          # Only for self: a pinned older toolchain's release_cli rejects --tree.
+          tree=()
+          [ "$SELF" = "true" ] && tree=(--tree "$GITHUB_WORKSPACE/pkg")
+          godot --headless --path "$WS" --script res://addons/package_exporter/src/class/release/release_cli.gd -- "$PKG_PATH" "${tree[@]}" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
           echo "zips=$(sed -n 's/^PE_RELEASE_OUTPUT //p' "$RUNNER_TEMP/export.log" | tail -1)" >> "$GITHUB_OUTPUT"
 

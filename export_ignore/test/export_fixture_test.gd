@@ -6,9 +6,9 @@ extends EditorScript
 ## five ways - baseline, reduced, relative, renamed, backported - so the same fixtures have to come
 ## out correct under settings that are mutually exclusive with each other.
 ##
-## EDITOR ONLY. Running an export reaches for EditorInterface, so this
-## suite cannot join addons/package_exporter/export_ignore/test/run_headless.gd - that runner's SUITES list is explicit,
-## and leaving this file out of it is what keeps headless green.
+## Needs the editor: an export reaches for EditorInterface. Test CI runs it in a headless editor,
+## with the fixture plugin pulled in through test_require; the plain --script run_headless.gd can't,
+## so it stays out of that runner's explicit SUITES list.
 ##
 ##     load("res://addons/package_exporter/export_ignore/test/export_fixture_test.gd").run_tests()
 
@@ -91,7 +91,7 @@ static func _export() -> bool:
 		if folder == "" or not DirAccess.dir_exists_absolute(dir):
 			_fail("export produced no directory at " + dir)
 			continue
-		# "pet-reduced-0.1.0/" -> "pet-reduced"
+		# "pet-reduced-0.2.0/" -> "pet-reduced"
 		_dirs[export_name.get_slice("-0", 0)] = dir
 		_installs[dir] = "res://" + folder.trim_suffix("/")
 

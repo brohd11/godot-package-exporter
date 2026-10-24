@@ -15,7 +15,7 @@ inputs:
     description: Where the package installs; empty reads path= from its cfg, then export_folder from its export config.
     default: ""
   release:
-    description: "true: a release build - the tag must match version=, and pkg/ moves into $WS at its install path."
+    description: "true: a release build - the tag must match version=, and pkg/ moves into $WS at its install path (except package_exporter itself, see self)."
     default: "false"
   publish:
     description: With release, publishing requires a tag push.
@@ -30,6 +30,9 @@ outputs:
   godot:
     description: The normalised godot-builds name.
     value: ${{ steps.pkg.outputs.godot }}
+  self:
+    description: "true when the package is package_exporter itself: with release, pkg/ stays put and release_cli takes it as --tree."
+    value: ${{ steps.pkg.outputs.self }}
 
 runs:
   using: composite
@@ -90,11 +93,12 @@ runs:
           ""|*"{{"*) echo "::error::can't tell where the package installs: set path= in $cfg or pass install-path"; exit 1 ;;
         esac
         path="${path%/}"
-        if [ "$RELEASE" = "true" ] && [ "$path" = "addons/package_exporter" ]; then
-          echo "::error::package_exporter installs where the toolchain lives; release it from the editor"; exit 1
-        fi
+        # package_exporter installs where the toolchain lives, so its checkout can't join $WS.
+        self=false
+        [ "$path" = "addons/package_exporter" ] && self=true
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "self=$self" >> "$GITHUB_OUTPUT"
 
     - name: Cache Godot
       id: godot-cache
@@ -133,6 +137,7 @@ runs:
         GODOT_VERSION: ${{ steps.pkg.outputs.godot }}
         PKG_PATH: ${{ steps.pkg.outputs.path }}
         RELEASE: ${{ inputs.release }}
+        SELF: ${{ steps.pkg.outputs.self }}
       run: |
         set -euo pipefail
         v="$TOOLCHAIN_VERSION"
@@ -145,7 +150,7 @@ runs:
         # The toolchain zip carries its install layout (addons/package_exporter).
         mkdir -p "$WS"
         unzip -q "$RUNNER_TEMP/package-exporter-$v.zip" -d "$WS"
-        if [ "$RELEASE" = "true" ]; then
+        if [ "$RELEASE" = "true" ] && [ "$SELF" != "true" ]; then
           # Joins at its install path, .git included - the export fetches it by tag from origin.
           mkdir -p "$WS/$(dirname "$PKG_PATH")"
           mv pkg "$WS/$PKG_PATH"

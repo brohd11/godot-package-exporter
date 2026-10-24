@@ -1,5 +1,9 @@
 export_root: "res://addons/package_exporter/export_ignore/exports/"
 build_require: @require
+# The fixture plugin export_fixture_test exports five ways; test-only, so it never ships.
+test_require:
+  - "@require"
+  - "brohd11/godot-plugin-exporter-test-plugin@v0.2.0"
 exports:
   -
     exclude:

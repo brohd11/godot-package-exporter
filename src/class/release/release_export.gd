@@ -35,11 +35,13 @@ static var zips:Array[String] = []
 
 ## `local` fetches every repo checked out in this project from that checkout rather than its
 ## remote - still by tag, so nothing uncommitted gets in, but nothing has to be pushed either.
-static func export_release(plugin_name:String, refresh:bool = false, local:bool = false, _reporter = null) -> bool:
+## `tree_dir` is the checkout to read cfg, config and origin from when it isn't at the install path,
+## as when CI releases package_exporter with a released one installed there.
+static func export_release(plugin_name:String, refresh:bool = false, local:bool = false, _reporter = null, tree_dir:String = "") -> bool:
 	reporter = Reporter.or_default(_reporter)
 	zips.clear()
 	var started = Time.get_ticks_msec()
-	var ok = _export_release(plugin_name, refresh, local)
+	var ok = _export_release(plugin_name, refresh, local, tree_dir)
 	var seconds = (Time.get_ticks_msec() - started) / 1000.0
 	if ok:
 		reporter.note("'%s' [color=25c225]release exported and verified[/color] (%.1fs)" % [plugin_name, seconds])
@@ -49,25 +51,27 @@ static func export_release(plugin_name:String, refresh:bool = false, local:bool 
 	return ok
 
 
-static func _export_release(plugin_name:String, refresh:bool, local:bool) -> bool:
-	var dev_dir = ExportPaths.resolve_target(plugin_name)
+static func _export_release(plugin_name:String, refresh:bool, local:bool, tree_dir:String) -> bool:
+	var dev_dir = ExportPaths.resolve_target(plugin_name) # the install path
 	if dev_dir == "":
 		return _fail("Invalid package target (expected a path inside this project): " + plugin_name)
-	var config_path = ExportFileUtils.get_export_config_path(plugin_name, reporter)
+	var tree = tree_dir if tree_dir != "" else dev_dir
+	var config_path = ExportFileUtils.get_export_config_path(plugin_name, reporter) if tree_dir == "" \
+		else ExportFileUtils.ExportIgnore.config_path(tree)
 	if not FileAccess.file_exists(config_path):
 		return _fail("no export config at " + config_path)
-	var version = _cfg_version(dev_dir)
+	var version = _cfg_version(tree)
 	if version == "":
-		return _fail("no version= in %s package cfg" % dev_dir)
-	var url = DepResolver.origin_url(dev_dir)
+		return _fail("no version= in %s package cfg" % tree)
+	var url = DepResolver.origin_url(tree)
 	if url == "":
-		return _fail("%s has no origin remote; release exports fetch the target by tag from it" % dev_dir)
+		return _fail("%s has no origin remote; release exports fetch the target by tag from it" % tree)
 
 	reporter.info("Release export: resolving %s %s" % [plugin_name, version])
 	var cache = RepoCache.new("", refresh)
 	var fetcher = PackageFetcher.new(cache, ReleaseCache.new(cache.root, refresh))
 	var dev_repos = DepResolver.scan_dev_repos()
-	dev_repos[DepResolver.repo_id_from_url(url)] = dev_dir
+	dev_repos[DepResolver.repo_id_from_url(url)] = tree
 	var overrides = {}
 	if local:
 		for id in dev_repos:

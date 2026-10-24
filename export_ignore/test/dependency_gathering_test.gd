@@ -1,6 +1,7 @@
 @tool
 extends EditorScript
-## Exercises the real export crawl and rewrites. The exporter requires editor services.
+## Exercises the real export crawl and rewrites. The exporter requires editor services, so this runs
+## in the editor console or test CI's headless editor, not run_headless.gd.
 
 const DIR = "user://pe_gathering_tests/"
 const UtilsLocal = preload("res://addons/package_exporter/src/class/utils_local.gd")

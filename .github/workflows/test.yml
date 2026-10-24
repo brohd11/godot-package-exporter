@@ -1,0 +1,14 @@
+# Tests package_exporter with its own reusable workflow: its suites, as pushed, against its requires
+# at their tags, plus the fixture plugin from test_require. The local ref tests a branch's edits to
+# package-test.yml too; the setup action it uses is still @main.
+name: test
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    uses: ./.github/workflows/package-test.yml
+    with:
+      godot-versions: '["4.6.3-stable", "4.7-stable"]'
