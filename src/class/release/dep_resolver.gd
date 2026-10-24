@@ -23,6 +23,7 @@ const REQUIRE_REF = "@require" # build_require item standing for the package cfg
 const TAGS_INCOMPARABLE = -99
 const KIND_SOURCE = "source"
 const KIND_RELEASE = "release"
+const KIND_CLONE = "clone" # gdaddon's install-only checkout marker; never valid in a require
 const CLONE_PREFIX = "clone:"
 const TREE_TAG = "worktree" # the target's "tag" in resolve_tree: whatever is on disk
 
@@ -60,8 +61,9 @@ func _init(fetcher_obj, dev_install_paths:Dictionary = {}, overrides:Dictionary 
 ## from gdaddon's `host/owner/repo`. Plain (or /source) is the tag's tree, whose own requirements
 ## join the selection; /release is its sealed release asset, for packages that can't be rebuilt
 ## from source (GDExtension, third-party zips). `/release@tag:<glob>` picks the asset when a release
-## has several; git forbids `:` in tags, so the split is unambiguous. gdaddon's `clone:` install mode
-## is dropped - a build reads the tree either way. null for any other shape.
+## has several; git forbids `:` in tags, so the split is unambiguous. gdaddon's legacy `clone:` prefix
+## is dropped (read as source); its `/clone` is install-only, null here and reported by
+## requires_in_data. null for any other shape.
 static func parse_dep(item:String) -> Dep:
 	item = item.strip_edges().trim_prefix(CLONE_PREFIX)
 	var repo_part = item
@@ -123,7 +125,8 @@ static func requires_in_export_config(text:String, ext:String, cfg_text:String =
 
 
 ## {requires: [{dep, compile, test}], error} from a parsed export config ({} when the package has
-## none). Each key holds a list of specs or a single spec; malformed specs are skipped. An absent
+## none). Each key holds a list of specs or a single spec; malformed specs are skipped, except a
+## `/clone`, which is an error since it reads as a real requirement. An absent
 ## build_require / test_require means `@require`, which expands to `cfg_text`'s require list (the
 ## package's own cfg); an explicit [] means none. A repo under several keys yields an entry per
 ## key: compile wins for verify flags, and any non-test entry clears the test flag.
@@ -150,7 +153,15 @@ static func requires_in_data(data:Dictionary, cfg_text:String, with_tests:bool =
 			var dep = parse_dep(spec)
 			if dep != null:
 				out.append({"dep": dep, "compile": key == COMPILE_KEY, "test": key == TEST_KEY})
+			elif _is_clone_spec(spec):
+				var msg = "%s: /clone is install-only (gdaddon install); require the tag instead" % spec.strip_edges()
+				if not msg in errors: # @require expands into build and test alike
+					errors.append(msg)
 	return {"requires": out, "error": "; ".join(errors)}
+
+
+static func _is_clone_spec(spec:String) -> bool:
+	return spec.strip_edges().get_slice("@", 0).rstrip("/").get_file() == KIND_CLONE
 
 
 ## Specs in the package cfg's `require` array, as gdaddon writes it: one line or several, with a

@@ -130,6 +130,7 @@ static func _test_parse_dep() -> void:
 	_check("one part rejected", DepResolver.parse_dep("justone@v1"), null)
 	_check("three parts without a dotted host or marker rejected", DepResolver.parse_dep("a/b/c@v1"), null)
 	_check("four parts rejected", DepResolver.parse_dep("a/b/c/d@v1"), null)
+	_check("/clone rejected", [DepResolver.parse_dep("o/r/clone@main"), DepResolver.parse_dep("o/r/clone")], [null, null])
 
 
 static func _test_export_config() -> void:
@@ -155,6 +156,9 @@ static func _test_export_config() -> void:
 	_check("@require: cfg without require is empty, not an error", [no_key.error, no_key.requires.size()], ["", 0])
 	_check("@require: no cfg is an error", DepResolver.requires_in_export_config(_ex(["@require"]), "yml").error != "", true)
 	_check("@require: compile_require is an error", DepResolver.requires_in_export_config(_ex([], ["@require"]), "yml", one_line).error != "", true)
+	var clone = DepResolver.requires_in_export_config(_ex(["@require"]), "yml", '[plugin]\nrequire=["a/b@v1", "c/d/clone@main"]\n')
+	_check("/clone in a cfg is one error, other specs kept", [clone.error.count("/clone is install-only"), clone.requires.map(func(r): return r.dep.repo_id)],
+		[1, ["github.com/a/b"]])
 	_check("cfg_require: [addon] list wins", DepResolver.cfg_require('[plugin]\nrequire=["a/b@v1"]\n[addon]\nrequire=[\n"c/d@v1",\n]\n'), ["c/d@v1"])
 	_check("cfg_require: [plugin] list when [addon] has none", DepResolver.cfg_require('[addon]\nname="x"\n[plugin]\nrequire=["a/b@v1"]\n'), ["a/b@v1"])
 	_check("cfg_require: other section ignored", DepResolver.cfg_require('[deps]\nrequire=["a/b@v1"]\n[plugin]\nname="x"\n').size(), 0)
