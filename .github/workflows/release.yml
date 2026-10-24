@@ -1,0 +1,16 @@
+# Builds and publishes package_exporter on version tags with its own reusable workflow: the tag's
+# source builds itself, the latest release only resolves and verifies. The tag must match version=.
+# A manual run (Actions tab) builds the tag matching version= without publishing it.
+name: release
+on:
+  push:
+    tags: ["v*", "[0-9]*"]
+  workflow_dispatch:
+jobs:
+  release:
+    uses: ./.github/workflows/package-release.yml
+    with:
+      godot-version: "4.7-stable"
+      publish: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: write
