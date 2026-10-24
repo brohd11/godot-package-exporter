@@ -91,7 +91,7 @@ static func _export() -> bool:
 		if folder == "" or not DirAccess.dir_exists_absolute(dir):
 			_fail("export produced no directory at " + dir)
 			continue
-		# "pet-reduced-0.2.0/" -> "pet-reduced"
+		# "pet-reduced-0.2.1/" -> "pet-reduced"
 		_dirs[export_name.get_slice("-0", 0)] = dir
 		_installs[dir] = "res://" + folder.trim_suffix("/")
 

@@ -3,7 +3,7 @@ build_require: @require
 # The fixture plugin export_fixture_test exports five ways; test-only, so it never ships.
 test_require:
   - "@require"
-  - "brohd11/godot-plugin-exporter-test-plugin@v0.2.0"
+  - "brohd11/godot-plugin-exporter-test-plugin@v0.2.1"
 exports:
   -
     exclude:
