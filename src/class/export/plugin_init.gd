@@ -151,30 +151,32 @@ const RELEASE_WORKFLOW_REF = "main"
 
 ## Opts a package into CI releases: a workflow at its repo root calling PackageExporter's reusable
 ## one on version tags. Separate from package_init so publishing stays a choice; never overwrites.
-## Returns the path written, or "".
-static func add_release_workflow(target:String) -> String:
-	return _report_workflow("Release", write_release_workflow, target)
+## A package below its repo's root (a whole-project repo) is refused unless `allow_project_root`,
+## which writes at that root with package-dir pointing at it. Returns the path written, or "".
+static func add_release_workflow(target:String, allow_project_root:bool = false) -> String:
+	return _report_workflow("Release", write_release_workflow, target, allow_project_root)
 
 
 ## Opts a package into test CI: on every push and pull request, its suites run against its requires
-## at their tags. Never overwrites. Returns the path written, or "".
-static func add_test_workflow(target:String) -> String:
-	return _report_workflow("Test", write_test_workflow, target)
+## at their tags. Never overwrites; `allow_project_root` as in add_release_workflow. Returns the
+## path written, or "".
+static func add_test_workflow(target:String, allow_project_root:bool = false) -> String:
+	return _report_workflow("Test", write_test_workflow, target, allow_project_root)
 
 
 ## add_release_workflow without console output: a refusal ("" returned) or a warning about a
 ## written file goes into `notes`, so tests can assert on it.
-static func write_release_workflow(target:String, notes:Array[String]) -> String:
-	return _write_workflow(target, RELEASE_WORKFLOW_PATH, _NewPluginText.RELEASE_WORKFLOW_TEXT, notes)
+static func write_release_workflow(target:String, notes:Array[String], allow_project_root:bool = false) -> String:
+	return _write_workflow(target, RELEASE_WORKFLOW_PATH, _NewPluginText.RELEASE_WORKFLOW_TEXT, notes, allow_project_root)
 
 
-static func write_test_workflow(target:String, notes:Array[String]) -> String:
-	return _write_workflow(target, TEST_WORKFLOW_PATH, _NewPluginText.TEST_WORKFLOW_TEXT, notes)
+static func write_test_workflow(target:String, notes:Array[String], allow_project_root:bool = false) -> String:
+	return _write_workflow(target, TEST_WORKFLOW_PATH, _NewPluginText.TEST_WORKFLOW_TEXT, notes, allow_project_root)
 
 
-static func _report_workflow(kind:String, write:Callable, target:String) -> String:
+static func _report_workflow(kind:String, write:Callable, target:String, allow_project_root:bool) -> String:
 	var notes:Array[String] = []
-	var path = write.call(target, notes)
+	var path = write.call(target, notes, allow_project_root)
 	for note in notes:
 		if path == "":
 			printerr(note)
@@ -185,17 +187,33 @@ static func _report_workflow(kind:String, write:Callable, target:String) -> Stri
 	return path
 
 
-## `text` takes the ref and the Godot version, the editor's own unless it's a custom build.
-static func _write_workflow(target:String, rel_path:String, text:String, notes:Array[String]) -> String:
+## `text` takes the ref, the Godot version (the editor's own unless it's a custom build) and the
+## package-dir lines. A package below its repo's root goes there only with `allow_project_root`:
+## a plain addon folder inside a dev project's repo looks the same, and shouldn't get one by accident.
+static func _write_workflow(target:String, rel_path:String, text:String, notes:Array[String], allow_project_root:bool) -> String:
 	var package_dir = ExportPaths.resolve_target(target)
 	if package_dir == "" or PackageCfg.find(package_dir) == "":
 		notes.append("Not a package (no %s): %s" % [" / ".join(PackageCfg.NAMES), target])
 		return ""
-	var path = package_dir.path_join(rel_path)
+	# The prefix (the package's path in its repo) rather than comparing dirs, which symlinks break.
+	var repo = ExportFileUtils.run_git_exec(package_dir, ["rev-parse", "--show-toplevel", "--show-prefix"])
+	var repo_lines = "".join(repo.output).split("\n") if repo.exit == 0 else PackedStringArray()
+	var prefix = repo_lines[1].strip_edges().trim_suffix("/") if repo_lines.size() > 1 else ""
+	var root_dir = package_dir
+	var package_dir_lines = ""
+	if prefix != "":
+		var toplevel = repo_lines[0].strip_edges()
+		if not allow_project_root:
+			notes.append("%s is inside the repo at %s, not its root; pass --allow-project-root to write the workflow there with package-dir: %s" % [
+				package_dir, toplevel, prefix])
+			return ""
+		root_dir = ProjectSettings.localize_path(toplevel)
+		package_dir_lines = _NewPluginText.PACKAGE_DIR_TEXT % prefix
+	var path = root_dir.path_join(rel_path)
 	if FileAccess.file_exists(path):
 		notes.append("Workflow already exists: " + path)
 		return ""
-	if not DirAccess.dir_exists_absolute(package_dir.path_join(".git")):
+	if repo.exit != 0:
 		notes.append("%s has no .git dir; the workflow only runs from the package's own repo root" % package_dir)
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var file = FileAccess.open(path, FileAccess.WRITE)
@@ -207,7 +225,7 @@ static func _write_workflow(target:String, rel_path:String, text:String, notes:A
 		var info = Engine.get_version_info()
 		godot = "%d.%d-stable" % [info.major, info.minor]
 		notes.append("%s isn't an official Godot build; the workflow uses %s, edit godot-version to change it" % [info.string, godot])
-	file.store_string(text % [RELEASE_WORKFLOW_REF, godot])
+	file.store_string(text % [RELEASE_WORKFLOW_REF, godot, package_dir_lines])
 	file.close()
 	return path
 
@@ -242,7 +260,7 @@ jobs:
       # Builds and verifies on this Godot; it must run everything the package and its deps use.
       godot-version: "%s"
       publish: ${{ github.event_name == \'push\' }}
-    permissions:
+%s    permissions:
       contents: write
 '
 
@@ -260,6 +278,11 @@ jobs:
     uses: brohd11/godot-package-exporter/.github/workflows/package-test.yml@%s
     with:
       godot-versions: \'["%s"]\'
+%s'
+
+	const PACKAGE_DIR_TEXT = \
+'      # The package\'s folder in this repo, since the repo isn\'t the package itself.
+      package-dir: "%s"
 '
 
 	const PLUGIN_GD_TEXT = \

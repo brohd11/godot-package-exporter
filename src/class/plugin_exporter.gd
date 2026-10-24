@@ -35,11 +35,11 @@ static func plugin_init(plugin_name:String):
 static func package_init(target:String, cfg_name:String = "addon.cfg"):
 	PluginInit.package_init(target, cfg_name)
 
-static func add_release_workflow(target:String) -> String:
-	return PluginInit.add_release_workflow(target)
+static func add_release_workflow(target:String, allow_project_root:bool = false) -> String:
+	return PluginInit.add_release_workflow(target, allow_project_root)
 
-static func add_test_workflow(target:String) -> String:
-	return PluginInit.add_test_workflow(target)
+static func add_test_workflow(target:String, allow_project_root:bool = false) -> String:
+	return PluginInit.add_test_workflow(target, allow_project_root)
 
 ## Test CI locally: the package's suites against its requires at their tags, in a workspace.
 static func test_package(target:String, refresh:bool = false, local:bool = false, reporter = null) -> bool:

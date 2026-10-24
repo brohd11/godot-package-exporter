@@ -6,7 +6,10 @@ const PECommandUtils = preload("res://addons/package_exporter/src/editor_plugins
 const _HELP = \
 "Opt a package into test CI: writes .github/workflows/test.yml at its repo root, running its
 suites on every push against its requires at their tags. Never overwrites an existing file.
-Usage: package_exporter ci test_workflow <plugin_name>"
+A package below its repo's root (a whole-project repo) is refused unless --allow-project-root.
+Usage: package_exporter ci test_workflow [--allow-project-root] <plugin_name>"
+
+var allow_project_root_flag := false
 
 static func get_command_name() -> String:
 	return "test_workflow"
@@ -20,8 +23,19 @@ static func get_self_command_data() -> Dictionary:
 func _get_completions(ctx:Completion):
 	return PECommandUtils.plugin_name_completion(self, ctx, PECommandUtils.TargetAddons.VALID)
 
+func _get_flags() -> Dictionary:
+	var options = Options.new()
+	options.add_option("--allow-project-root", {
+		&"help": "Write at the repo root above the package, with package-dir pointing at it."
+	})
+	return options.get_options()
+
+func _process_flag(flag:String):
+	if flag == "--allow-project-root":
+		allow_project_root_flag = true
+
 func _execute(ctx:Context):
-	var path = PluginExporter.add_test_workflow(positional_args[0])
+	var path = PluginExporter.add_test_workflow(positional_args[0], allow_project_root_flag)
 	if path == "":
 		ctx.append_error("No workflow written; see Output.")
 		return ExitCode.FAIL
