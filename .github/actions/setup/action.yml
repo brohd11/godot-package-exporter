@@ -14,8 +14,11 @@ inputs:
   install-path:
     description: Where the package installs; empty reads path= from its cfg, then export_folder from its export config.
     default: ""
+  package-dir:
+    description: Where the package sits in the repo when that isn't the root (whole-project repos); empty finds its cfg.
+    default: ""
   release:
-    description: "true: a release build - the tag must match version=, and pkg/ moves into $WS at its install path (except package_exporter itself, see self)."
+    description: "true: a release build - the tag must match version=, and a package at the repo root moves into $WS at its install path (see moved)."
     default: "false"
   publish:
     description: With release, publishing requires a tag push.
@@ -33,6 +36,12 @@ outputs:
   self:
     description: "true when the package is package_exporter itself: with release, pkg/ stays put and release_cli takes it as --tree."
     value: ${{ steps.pkg.outputs.self }}
+  dir:
+    description: The package's checkout, absolute - pkg/ or the folder inside it holding the package cfg.
+    value: ${{ steps.pkg.outputs.dir }}
+  moved:
+    description: "true when pkg/ joined $WS at the install path; otherwise the CLIs take dir as --tree."
+    value: ${{ steps.pkg.outputs.moved }}
 
 runs:
   using: composite
@@ -42,6 +51,7 @@ runs:
       shell: bash
       env:
         INSTALL_PATH: ${{ inputs.install-path }}
+        PACKAGE_DIR: ${{ inputs.package-dir }}
         RELEASE: ${{ inputs.release }}
         PUBLISH: ${{ inputs.publish }}
         GODOT_VERSION: ${{ inputs.godot-version }}
@@ -61,13 +71,52 @@ runs:
         fi
         echo "godot=$godot" >> "$GITHUB_OUTPUT"
 
-        cfg=""
-        for name in plugin.cfg version.cfg addon.cfg; do
-          if [ -f "pkg/$name" ]; then cfg="pkg/$name"; break; fi
-        done
-        [ -n "$cfg" ] || { echo "::error::no plugin.cfg / version.cfg / addon.cfg at the repo root"; exit 1; }
-        # First `key="value"` line; a missing key is "", not a pipefail exit.
-        value() { grep -m1 -E "^$1[[:space:]]*=" "$cfg" | sed -E 's/^[^=]*=[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/' || true; }
+        # First `key="value"` line of a cfg; a missing key is "", not a pipefail exit.
+        cfg_value() { grep -m1 -E "^$2[[:space:]]*=" "$1" | sed -E 's/^[^=]*=[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/' || true; }
+        cfg_in() {
+          local name
+          for name in plugin.cfg version.cfg addon.cfg; do
+            if [ -f "$1/$name" ]; then echo "$1/$name"; return 0; fi
+          done
+          return 0
+        }
+        # owner/repo of a url=, lowercased, to compare with GITHUB_REPOSITORY.
+        repo_of() { local u="${1%/}"; u="${u%.git}"; u="${u//://}"; awk -F/ 'NF >= 2 { print tolower($(NF-1) "/" $NF) }' <<< "$u"; }
+
+        dir="${PACKAGE_DIR#./}"
+        dir="${dir%/}"
+        if [ -n "$dir" ]; then
+          if [ -z "$(cfg_in "pkg/$dir")" ]; then
+            echo "::error::no plugin.cfg / version.cfg / addon.cfg in package-dir $dir"; exit 1
+          fi
+        elif [ -z "$(cfg_in pkg)" ]; then
+          # A whole-project repo: the outermost tracked cfg outside export_ignore fixtures, or among
+          # several the one whose url= names this repo - the same pick as PackageLayout.locate.
+          mapfile -t found < <(git -C pkg ls-files | grep -E '/(plugin|version|addon)\.cfg$' \
+            | grep -vE '(^|/)_?export_ignore/' | sed -E 's#/[^/]+$##' | sort -u)
+          top=()
+          for d in "${found[@]}"; do
+            nested=false
+            for o in "${found[@]}"; do
+              if [[ "$d" == "$o"/* ]]; then nested=true; fi
+            done
+            if [ "$nested" = "false" ]; then top+=("$d"); fi
+          done
+          picked=("${top[@]}")
+          if [ "${#top[@]}" -gt 1 ]; then
+            picked=()
+            for d in "${top[@]}"; do
+              if [ "$(repo_of "$(cfg_value "$(cfg_in "pkg/$d")" url)")" = "${GITHUB_REPOSITORY,,}" ]; then picked+=("$d"); fi
+            done
+          fi
+          if [ "${#picked[@]}" -ne 1 ]; then
+            echo "::error::no plugin.cfg / version.cfg / addon.cfg at the repo root, and ${#top[@]} package cfgs elsewhere${top[*]:+ (${top[*]})}; pass package-dir"; exit 1
+          fi
+          dir="${picked[0]}"
+        fi
+        pkg_dir="pkg${dir:+/$dir}"
+        cfg=$(cfg_in "$pkg_dir")
+        value() { cfg_value "$cfg" "$1"; }
 
         version=$(value version)
         [ -n "$version" ] || { echo "::error::no version= in $cfg"; exit 1; }
@@ -86,7 +135,7 @@ runs:
         [ -n "$path" ] || path=$(value path)
         if [ -z "$path" ]; then
           # Packages have one of the two dirs, so an unmatched glob is expected.
-          path=$(grep -h -m1 -E '^[[:space:]]*export_folder:' pkg/_export_ignore/*.yml pkg/export_ignore/*.yml 2>/dev/null \
+          path=$(grep -h -m1 -E '^[[:space:]]*export_folder:' "$pkg_dir"/_export_ignore/*.yml "$pkg_dir"/export_ignore/*.yml 2>/dev/null \
             | head -1 | sed -E 's/^[[:space:]]*export_folder:[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/') || true
         fi
         case "$path" in
@@ -96,9 +145,15 @@ runs:
         # package_exporter installs where the toolchain lives, so its checkout can't join $WS.
         self=false
         [ "$path" = "addons/package_exporter" ] && self=true
+        # Only a package that is the whole repo can join $WS with its .git; anything else stays put.
+        moved=false
+        if [ "$RELEASE" = "true" ] && [ "$self" = "false" ] && [ -z "$dir" ]; then moved=true; fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "path=$path" >> "$GITHUB_OUTPUT"
         echo "self=$self" >> "$GITHUB_OUTPUT"
+        echo "rel=$pkg_dir" >> "$GITHUB_OUTPUT"
+        echo "dir=$GITHUB_WORKSPACE/$pkg_dir" >> "$GITHUB_OUTPUT"
+        echo "moved=$moved" >> "$GITHUB_OUTPUT"
 
     - name: Cache Godot
       id: godot-cache
@@ -126,7 +181,7 @@ runs:
     - uses: actions/cache@v4
       with:
         path: ~/.cache/package_exporter
-        key: package-exporter-${{ github.repository }}-${{ steps.pkg.outputs.godot }}-${{ hashFiles('pkg/*.cfg', 'pkg/_export_ignore/*', 'pkg/export_ignore/*.yml') }}
+        key: package-exporter-${{ github.repository }}-${{ steps.pkg.outputs.godot }}-${{ hashFiles(format('{0}/*.cfg', steps.pkg.outputs.rel), format('{0}/_export_ignore/*', steps.pkg.outputs.rel), format('{0}/export_ignore/*.yml', steps.pkg.outputs.rel)) }}
         restore-keys: package-exporter-${{ github.repository }}-${{ steps.pkg.outputs.godot }}-
 
     - name: Assemble project
@@ -136,8 +191,7 @@ runs:
         TOOLCHAIN_VERSION: ${{ inputs.toolchain-version }}
         GODOT_VERSION: ${{ steps.pkg.outputs.godot }}
         PKG_PATH: ${{ steps.pkg.outputs.path }}
-        RELEASE: ${{ inputs.release }}
-        SELF: ${{ steps.pkg.outputs.self }}
+        MOVED: ${{ steps.pkg.outputs.moved }}
       run: |
         set -euo pipefail
         v="$TOOLCHAIN_VERSION"
@@ -150,7 +204,7 @@ runs:
         # The toolchain zip carries its install layout (addons/package_exporter).
         mkdir -p "$WS"
         unzip -q "$RUNNER_TEMP/package-exporter-$v.zip" -d "$WS"
-        if [ "$RELEASE" = "true" ] && [ "$SELF" != "true" ]; then
+        if [ "$MOVED" = "true" ]; then
           # Joins at its install path, .git included - the export fetches it by tag from origin.
           mkdir -p "$WS/$(dirname "$PKG_PATH")"
           mv pkg "$WS/$PKG_PATH"

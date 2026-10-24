@@ -1,7 +1,9 @@
 # Reusable release build for a PackageExporter package (callers come from add_release_workflow).
 # Builds the package from pinned tags with a released package_exporter as toolchain, compile-checks
 # the output on its own, then attaches the zips to the tag's GitHub release. package_exporter itself
-# builds with its tag's own source; the released one only resolves and verifies.
+# builds with its tag's own source; the released one only resolves and verifies. The package can be
+# the repo or a folder anywhere in it (a whole-project repo); in the latter case only that folder is
+# built, so a project-root LICENSE doesn't reach it - keep one in the package.
 name: package-release
 
 on:
@@ -17,6 +19,10 @@ on:
         default: ""
       install-path:
         description: Where the package installs (addons/...); empty reads path= from its cfg, then export_folder from its export config.
+        type: string
+        default: ""
+      package-dir:
+        description: Where the package sits in the repo when that isn't the root (whole-project repos); empty finds its cfg.
         type: string
         default: ""
       publish:
@@ -43,6 +49,7 @@ jobs:
           godot-version: ${{ inputs.godot-version }}
           toolchain-version: ${{ inputs.toolchain-version }}
           install-path: ${{ inputs.install-path }}
+          package-dir: ${{ inputs.package-dir }}
           release: "true"
           publish: ${{ inputs.publish }}
 
@@ -51,12 +58,14 @@ jobs:
         shell: bash
         env:
           PKG_PATH: ${{ steps.pkg.outputs.path }}
-          SELF: ${{ steps.pkg.outputs.self }}
+          PKG_DIR: ${{ steps.pkg.outputs.dir }}
+          MOVED: ${{ steps.pkg.outputs.moved }}
         run: |
           set -euo pipefail
-          # Only for self: a pinned older toolchain's release_cli rejects --tree.
+          # Only when the checkout couldn't join $WS (self, or a whole-project repo): a pinned older
+          # toolchain's release_cli rejects --tree.
           tree=()
-          [ "$SELF" = "true" ] && tree=(--tree "$GITHUB_WORKSPACE/pkg")
+          [ "$MOVED" = "true" ] || tree=(--tree "$PKG_DIR")
           godot --headless --path "$WS" --script res://addons/package_exporter/src/class/release/release_cli.gd -- "$PKG_PATH" "${tree[@]}" \
             2>&1 | tee "$RUNNER_TEMP/export.log"
           echo "zips=$(sed -n 's/^PE_RELEASE_OUTPUT //p' "$RUNNER_TEMP/export.log" | tail -1)" >> "$GITHUB_OUTPUT"

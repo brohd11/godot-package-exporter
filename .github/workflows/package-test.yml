@@ -18,6 +18,10 @@ on:
         description: Where the package installs (addons/...); empty reads path= from its cfg, then export_folder from its export config.
         type: string
         default: ""
+      package-dir:
+        description: Where the package sits in the repo when that isn't the root (whole-project repos); empty finds its cfg.
+        type: string
+        default: ""
 
 jobs:
   test:
@@ -43,15 +47,18 @@ jobs:
           godot-version: ${{ matrix.godot }}
           toolchain-version: ${{ inputs.toolchain-version }}
           install-path: ${{ inputs.install-path }}
+          package-dir: ${{ inputs.package-dir }}
 
-      # The checkout stays outside $WS (--tree): package_exporter's own install path holds the toolchain.
+      # The checkout stays outside $WS (--tree): package_exporter's own install path holds the
+      # toolchain, and a whole-project repo's package is only a folder of it.
       - name: Test
         shell: bash
         env:
           PKG_PATH: ${{ steps.pkg.outputs.path }}
+          PKG_DIR: ${{ steps.pkg.outputs.dir }}
         run: |
           set -euo pipefail
-          godot --headless --path "$WS" --script res://addons/package_exporter/src/class/release/test_cli.gd -- "$PKG_PATH" --tree "$GITHUB_WORKSPACE/pkg" \
+          godot --headless --path "$WS" --script res://addons/package_exporter/src/class/release/test_cli.gd -- "$PKG_PATH" --tree "$PKG_DIR" \
             2>&1 | tee "$RUNNER_TEMP/test.log"
 
       - name: Upload test log
