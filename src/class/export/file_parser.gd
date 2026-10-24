@@ -102,7 +102,9 @@ func get_dependencies(file_path:String, all_dependencies:Dictionary, scanned_fil
 		if scanned_files.has(current_file_path):
 			continue
 		scanned_files[current_file_path] = true
-		
+		if optimization.export_obj.file_deps_ignored(current_file_path):
+			continue
+
 		var file_deps = {}
 		var ext = current_file_path.get_extension()
 		if ext in TEXT_FILE_TYPES:
@@ -121,11 +123,13 @@ func get_dependencies(file_path:String, all_dependencies:Dictionary, scanned_fil
 			var data = file_deps.get(path)
 			var existing = all_dependencies.get(path, {})
 			var entry = {KeysData.DEPENDENT:current_file_path}
-			# a "#! dependency <dir>" placement has to survive a later plain reference to the
+			# a "#! dependency <destination>" placement has to survive a later plain reference to the
 			# same file, whichever order the two are crawled in
 			var dep_dir = data.get(KeysData.DEPENDENCY_DIR, existing.get(KeysData.DEPENDENCY_DIR))
 			if dep_dir != null:
 				entry[KeysData.DEPENDENCY_DIR] = dep_dir
+				var placement = data if data.has(KeysData.DEPENDENCY_DIR) else existing
+				entry[KeysData.DEPENDENCY_SOURCE] = placement.get(KeysData.DEPENDENCY_SOURCE, current_file_path)
 			all_dependencies[path] = entry
 			if not scanned_files.has(path):
 				files_to_scan.push_back(path)

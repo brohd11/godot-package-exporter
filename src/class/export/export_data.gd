@@ -179,8 +179,11 @@ func _init(export_config_path):
 		export_obj.sort_valid_files()
 		export_obj.get_global_classes_used_in_valid_files()
 		export_obj.get_file_dependencies()
-		export_obj.build_access_bindings()
 		export_obj.get_global_class_export_paths()
+		export_obj.resolve_dependency_placements()
+		if not export_obj.export_valid:
+			return
+		export_obj.build_access_bindings()
 		
 		export_obj.gather_licenses()
 

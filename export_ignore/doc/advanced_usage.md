@@ -7,7 +7,10 @@ in turn. Preloads, inheritance, global classes, and scene/resource references ar
 any tag. An optional preload hub such as `utils_remote.gd` works the same as any other script.
 
 Literal `load()` calls and ordinary path strings are only copied when marked `#! dependency`.
-Use `#! dependency current` or an explicit directory to choose where a dependency is placed.
+Use `#! dependency current` or an explicit output file path to choose where a dependency is placed.
+Relative paths follow the declaring file's final exported location. The literal prefix
+`<package>/` anchors a path to the active export's source folder, before export conversion
+and renaming. It does not refer to the package that contains the declaring file.
 
 Global classes can be used as normal.
 
@@ -36,7 +39,26 @@ This format can be used to make a master file that preloads out of plugin files.
 
 This is useful if the desired files are not global classes, you can preload any classes that you want to use in your plugin.
 
-You can also declare files as dependencies if they are not preloadable. You can also give these a custom path. `#! dependency current` will place the file in the same directory as the file it is declared in. You also put a path there, it must be within your plugin folder to be valid.
+You can also declare files as dependencies if they are not preloadable. Explicit destinations are
+complete file paths, allowing the copy to be renamed, including to an extensionless name such as
+`LICENSE`. `current` and `.` keep the original filename beside the exported declaring file,
+including when that file moves to the remote directory, replaces a stub, or relocates as a global.
+
+| Destination | Placement |
+| --- | --- |
+| `licenses/font/LICENSE` or `./licenses/font/LICENSE` | Named `LICENSE` below the declaring file's exported directory |
+| `../licenses/font/LICENSE` | Relative to the parent of that directory |
+| `current` or `.` | Original filename beside the exported declaring file |
+| `<package>/licenses/font/LICENSE` | Named `LICENSE` below the active export's source root, then converted and renamed |
+| `res://addons/my_plugin/licenses/font/LICENSE` | Absolute file path within the active export's source folder |
+| Omitted | Default remote placement |
+
+An absolute destination outside the active source folder, a relative destination escaping the
+exported plugin, or a cycle of relative placements fails the export before copying. Shared
+libraries should use `<package>/` for package-root assets so they work in every consuming plugin.
+These rules affect the destination argument only; dependency source literals resolve as before.
+Directory-only forms ending in `/` are rejected. Existing explicit directory destinations must
+have the intended filename appended; the exporter no longer appends it automatically.
 
 ``` gdscript
 class_name MyPluginUtilsRemote
@@ -45,7 +67,8 @@ const MyClass = preload("res://some_other/folder/my_class.gd")
 const MyOtherClass = preload("res://some_other/folder/my_other_class.gd")
 
 const MY_FILE = "res://some_other/folder/non-resource.file" #! dependency
-const MY_CUST_FILE = "res://file.file" #! dependency res://addons/my_plugin/deps
+const MY_CUST_FILE = "res://file.file" #! dependency res://addons/my_plugin/deps/renamed.file
+const FONT_LICENSE = "res://some_library/font.LICENSE.txt" #! dependency <package>/licenses/font/LICENSE
 ```
 
 In another script you can access like:

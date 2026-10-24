@@ -13,7 +13,13 @@
  - remote_dir - where all out of plugin files will be recreated
  - export_name - package folder under export_root + plugin_folder, zipped as a whole. Defaults to the last segment of plugin_folder
  - export_folder - install path relative to res://, e.g. `addons/_lib/my_lib`. Recreated inside the package, so it extracts straight into a project. Any path relative to res:// (no `{{version}}` templates); defaults to source. A path different from source renames the plugin and rewrites its paths to match
- - other_transfers - other files to transfer into plugin on export
+ - other_transfers - other files to transfer into plugin on export. Each entry:
+   - to - destination, relative to source unless it already starts with it. A file for a single-file `from`, a directory otherwise
+   - from - a file, an array of files, or a directory. Omitted with a `to` ending in `.gdignore` to write an empty one
+   - recursive - bool, defaults false. For a directory `from`, includes subdirectories, keeping their structure under `to`
+   - ignore_deps - bool, defaults false. Files are copied and their paths rewritten, but never scanned for dependencies or global classes. For optional integrations that name classes from plugins that may be absent: ship them under a `.gdignore` so they don't compile until loaded
+   - custom_tree_message - text appended to the file in the export tree view
+   - Two sources resolving to the same destination abort the export
  - ignore_dependencies - do not export any dependencies for the files
  - parser_overide_settings - overide settings per export for the file parser
  

@@ -18,6 +18,7 @@ static func run_tests() -> Dictionary:
 
 	_test_export_folder_error()
 	_test_targets()
+	_test_dependency_destinations()
 
 	var output:Array[String] = []
 	output.append("export_paths: %d passed, %d failed" % [_passed, _failures.size()])
@@ -61,3 +62,30 @@ static func _test_targets() -> void:
 	_check("workspace aliases", ExportPaths.workspace_key(expected), ExportPaths.workspace_key("_lib/brohd"))
 	_check("workspace stays flat", "/" in ExportPaths.workspace_key(expected), false)
 	_check("workspace basename collision", ExportPaths.workspace_key("lib/pkg") == ExportPaths.workspace_key("res://lib/pkg"), false)
+
+
+static func _test_dependency_destinations() -> void:
+	var source = "res://addons/example/"
+	var declaring = source + "remote/ui/console.gd"
+	var cases = {
+		"licenses/font/LICENSE": "remote/ui/licenses/font/LICENSE",
+		"./licenses/./font/LICENSE": "remote/ui/licenses/font/LICENSE",
+		"../licenses/font/LICENSE": "remote/licenses/font/LICENSE",
+		"LICENSE": "remote/ui/LICENSE",
+		"current": "remote/ui/LICENSE.txt",
+		".": "remote/ui/LICENSE.txt",
+		"<package>/licenses/font/LICENSE": "licenses/font/LICENSE",
+		"<package>/licenses/../font/LICENSE": "font/LICENSE",
+		"<package>/LICENSE": "LICENSE",
+		source + "LICENSE": "LICENSE",
+		source + "licenses/font/LICENSE": "licenses/font/LICENSE",
+		ProjectSettings.globalize_path(source + "licenses/font/LICENSE"): "licenses/font/LICENSE",
+	}
+	for raw:String in cases:
+		_check("destination: " + raw, ExportPaths.dependency_destination(raw, source, declaring, "LICENSE.txt"), source + cases[raw])
+	for raw in ["../../../outside", "<package>/../outside", "res://addons/example-other/licenses",
+			"res://addons/another/licenses", "user://licenses", "/tmp/licenses", "res://addons/example/../outside",
+			"", "<package>", "<package>/", "licenses/", "licenses/..", "licenses/.", source]:
+		_check("invalid destination: " + raw, ExportPaths.dependency_destination(raw, source, declaring, "LICENSE.txt"), "")
+	_check("relative needs declaring placement", ExportPaths.dependency_destination("licenses", source, "", "LICENSE.txt"), "")
+	_check("package independent of declaration", ExportPaths.dependency_destination("<package>/licenses/LICENSE", source, "", "LICENSE.txt"), source + "licenses/LICENSE")

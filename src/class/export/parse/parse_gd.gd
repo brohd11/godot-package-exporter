@@ -184,6 +184,9 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null):
 		# abandoning every rewrite this pass made, since the caller only takes the returned lines.
 		var adjusted_path = export_obj.adjusted_remote_paths.get(remote_path, "")
 		if adjusted_path == "":
+			# An ignore_deps file may name classes from plugins it only optionally integrates with.
+			if export_obj.file_deps_ignored(export_obj.file_parser.current_file_path_parsing):
+				continue
 			printerr('Class "%s" is used in %s but was not copied into the export - cannot inject its preload.'
 				% [name, file_path])
 			continue

@@ -22,6 +22,12 @@ static func run_tests() -> Dictionary:
 	_test_classes_and_reduction()
 	_test_replacement()
 	_test_scan_consumers()
+	_test_destinations()
+	_test_destination_provenance()
+	_test_relocated_declarations()
+	_test_destination_chains()
+	_test_invalid_destinations()
+	_test_other_transfers()
 	_clear_fixtures(DIR)
 	var output:Array = ["dependency_gathering: %d passed, %d failed" % [_passed, _failures.size()]]
 	output.append_array(_failures)
@@ -148,7 +154,138 @@ static func _test_scan_consumers() -> void:
 	view.queue_free()
 
 
-static func _crawl(roots:Array, classes:Dictionary = {}, reduce:bool = false):
+static func _test_destinations() -> void:
+	var asset = _w("external/source_font.LICENSE.txt", "font license\n")
+	# Remote paths embed the original path; user:// is not a project resource prefix.
+	var branch = ProjectSettings.globalize_path(_w("external/console.gd", ""))
+	var root = _w("plugin/main.gd", 'const Console = preload("%s")\n' % branch)
+	for renamed in [false, true]:
+		for destination in ["licenses/font/LICENSE", "./licenses/font/LICENSE", "../licenses/font/LICENSE", "current", ".", "<package>/licenses/font/LICENSE", DIR + "plugin/licenses/font/LICENSE"]:
+			var line = 'const LICENSE = "%s" #! dependency %s' % [asset, destination]
+			_w("external/console.gd", line + "\n")
+			var export = _crawl([root], {}, false, renamed)
+			var declaring_dest:String = export.get_remote_file_local_path(branch)
+			var expected:String
+			if destination == "current" or destination == ".":
+				expected = declaring_dest.get_base_dir().path_join(asset.get_file())
+			elif destination.begins_with("<package>") or destination.is_absolute_path():
+				expected = export.source.path_join("licenses/font/LICENSE")
+			else:
+				expected = declaring_dest.get_base_dir().path_join(destination).simplify_path()
+			var label = "%s renamed=%s" % [destination, renamed]
+			_check(label + " valid", export.export_valid, true)
+			_check(label + " copy destination", export.files_to_copy.get(asset, {}).get(Keys.TO), export.get_export_path(expected))
+			_check(label + " installed reference", export.adjusted_remote_paths.get(asset), export.get_renamed_path(expected))
+			export.file_parser.current_file_path_parsing = branch
+			var parser = export.file_parser.default_parsers.gd
+			_check(label + " rewritten constant", parser._update_paths(line), line.replace(asset, export.get_renamed_path(expected)))
+			export.use_relative_paths = true
+			var relative_line:String = parser._update_paths(line)
+			var reference = relative_line.get_slice('"', 1)
+			var installed_branch:String = export.adjusted_remote_paths[branch]
+			_check(label + " relative reference resolves", installed_branch.get_base_dir().path_join(reference).simplify_path(), export.get_renamed_path(expected))
+			if destination == "<package>/licenses/font/LICENSE":
+				var copy_path:String = export.files_to_copy[asset][Keys.TO]
+				export._simple_export(asset, copy_path, false, false)
+				_check(label + " renamed file contents", FileAccess.get_file_as_string(copy_path), "font license\n")
+				_check(label + " old filename not copied", FileAccess.file_exists(copy_path.get_base_dir().path_join(asset.get_file())), false)
+
+
+static func _test_destination_provenance() -> void:
+	var asset = _w("external/shared.txt", "shared\n")
+	var tagged = _w("plugin/nested/tagged.gd", 'const Asset = "%s" #! dependency nearby/shared.txt\n' % asset)
+	var plain = _w("plugin/plain_reference.gd", 'const Asset = "%s" #! dependency\n' % asset)
+	for roots in [[tagged, plain], [plain, tagged]]:
+		var export = _crawl(roots)
+		_check("tag provenance survives plain reference", export.file_dependencies[asset].get(Keys.DEPENDENCY_SOURCE), tagged)
+		_check("placement independent of plain reference order", export.adjusted_remote_paths.get(asset), DIR + "plugin/nested/nearby/shared.txt")
+	var second = _w("plugin/second.gd", 'const Asset = "%s" #! dependency last/shared.txt\n' % asset)
+	_check("last explicit destination wins", _crawl([tagged, second]).adjusted_remote_paths.get(asset), DIR + "plugin/last/shared.txt")
+
+
+static func _test_relocated_declarations() -> void:
+	var asset = _w("external/relocated.txt", "relocated\n")
+	var base = _w("external/declaring_base.gd", 'const Asset = "%s" #! dependency current\n' % asset)
+	var stub = _w("plugin/sub/stub.gd", '#! remote\nextends "%s"\n' % base)
+	var export = _crawl([stub], {}, false, true)
+	_check("current follows replacement stub", export.adjusted_remote_paths.get(asset), "res://addons/pe_renamed/sub/relocated.txt")
+	var root = _w("plugin/global_user.gd", "var moved = Moved\n")
+	export = _crawl([root], {"Moved": base})
+	_check("declaration relocated as global", export.adjusted_remote_paths.get(base), DIR + "plugin/global/declaring_base.gd")
+	_check("relative follows global relocation", export.adjusted_remote_paths.get(asset), DIR + "plugin/global/relocated.txt")
+
+
+static func _test_destination_chains() -> void:
+	var asset = _w("external/chained.txt", "chained\n")
+	var child = _w("external/child.gd", 'const Asset = "%s" #! dependency current\n' % asset)
+	var parent = _w("external/parent.gd", 'const Child = preload("%s") #! dependency children/renamed_child.gd\n' % child)
+	var root = _w("plugin/chain.gd", 'const Parent = preload("%s") #! dependency <package>/placed/renamed_parent.gd\n' % parent)
+	var plain = _w("plugin/early.gd", 'const Child = preload("%s")\n' % child)
+	for roots in [[root, plain], [plain, root]]:
+		var export = _crawl(roots, {}, false, true)
+		_check("chained destination valid", export.export_valid, true)
+		_check("chained parent renamed", export.adjusted_remote_paths.get(parent), "res://addons/pe_renamed/placed/renamed_parent.gd")
+		_check("chained child renamed", export.adjusted_remote_paths.get(child), "res://addons/pe_renamed/placed/children/renamed_child.gd")
+		_check("chained destination follows parent", export.adjusted_remote_paths.get(asset), "res://addons/pe_renamed/placed/children/chained.txt")
+		_check("chained copy inside package", export.files_to_copy.get(asset, {}).get(Keys.TO), DIR + "out/placed/children/chained.txt")
+
+
+static func _test_invalid_destinations() -> void:
+	var asset = _w("external/invalid.txt", "invalid\n")
+	for destination in ["<package>/../escape", "../escape", "res://addons/package_exporter/licenses/source_font/LICENSE", "<package>/licenses/"]:
+		var root = _w("plugin/invalid.gd", 'const Asset = "%s" #! dependency %s\n' % [asset, destination])
+		var export = _crawl([root])
+		_check("invalid destination aborts: " + destination, export.export_valid, false)
+		_check("invalid destination not copied: " + destination, export.files_to_copy.has(asset), false)
+		_check("invalid destination not rewritten: " + destination, export.adjusted_remote_paths.has(asset), false)
+	var a = _w("external/cycle_a.gd", "")
+	var b = _w("external/cycle_b.gd", 'const A = preload("%s") #! dependency current\n' % a)
+	_w("external/cycle_a.gd", 'const B = preload("%s") #! dependency current\n' % b)
+	var root = _w("plugin/cycle.gd", 'const A = preload("%s")\n' % a)
+	var export = _crawl([root])
+	_check("placement cycle aborts", export.export_valid, false)
+	_check("cycle a not copied", export.files_to_copy.has(a), false)
+	_check("cycle b not copied", export.files_to_copy.has(b), false)
+
+
+static func _test_other_transfers() -> void:
+	var leaf = _w("external/transfer_leaf.gd", "extends RefCounted\n")
+	var klass = _w("external/transfer_class.gd", "extends RefCounted\n")
+	var top = _w("bundle/top.gd", 'const Leaf = preload("%s")\nvar used = TransferClass\n' % leaf)
+	var nested = _w("bundle/sub/nested.gd", "extends RefCounted\n")
+	var classes = {"TransferClass": klass}
+	var row = {Keys.FROM: DIR + "bundle", Keys.TO: "bundled", Keys.RECURSIVE: true, Keys.IGNORE_DEPS: true}
+	var export = _transfer([row], classes)
+	_check("transfer valid", export.export_valid, true)
+	_check("recursive keeps subpath", export.valid_files_for_transfer.get(nested, {}).get(Keys.TO), DIR + "out/bundled/sub/nested.gd")
+	_check("recursive installed path", export.adjusted_remote_paths.get(nested), DIR + "plugin/bundled/sub/nested.gd")
+	_check("ignore_deps flagged", export.file_deps_ignored(top), true)
+	_check("ignore_deps file still copied", export.files_to_copy.has(top), true)
+	_check("ignore_deps skips preloads", export.files_to_copy.has(leaf), false)
+	_check("ignore_deps skips global classes", export.global_classes_used.has("TransferClass"), false)
+	export = _transfer([{Keys.FROM: DIR + "bundle", Keys.TO: "bundled"}], classes)
+	_check("non-recursive skips subdirs", export.valid_files_for_transfer.has(nested), false)
+	_check("non-recursive top file", export.valid_files_for_transfer.get(top, {}).get(Keys.TO), DIR + "out/bundled/top.gd")
+	_check("scanned transfer gathers preload", export.files_to_copy.has(leaf), true)
+	_check("scanned transfer gathers class", export.global_classes_used.has("TransferClass"), true)
+	export = _transfer([{Keys.FROM: top, Keys.TO: "same.gd"}, {Keys.FROM: nested, Keys.TO: "same.gd"}])
+	_check("shared destination aborts", export.export_valid, false)
+	_check("shared destination not copied", export.valid_files_for_transfer.is_empty(), true)
+
+
+static func _transfer(transfers:Array, classes:Dictionary = {}):
+	var export = _crawl([], classes)
+	export.other_transfers = transfers
+	export.get_valid_files_for_transfer()
+	export.sort_valid_files()
+	export.get_global_classes_used_in_valid_files()
+	export.get_file_dependencies()
+	export.get_global_class_export_paths()
+	export.resolve_dependency_placements()
+	return export
+
+
+static func _crawl(roots:Array, classes:Dictionary = {}, reduce:bool = false, renamed:bool = false):
 	var config = _w("config.json", JSON.stringify({
 		"export_root": DIR + "out", "plugin_folder": "test", "options": {}, "exports": []}))
 	var data = UtilsLocal.ExportData.new(config)
@@ -158,16 +295,20 @@ static func _crawl(roots:Array, classes:Dictionary = {}, reduce:bool = false):
 	export.export_data = data
 	export.source = DIR + "plugin/"
 	export.plugin_name = export.source
+	export.rename_plugin = renamed
+	export.new_plugin_name = "res://addons/pe_renamed/"
 	export.remote_dir = export.source + "remote"
-	export.export_dir_path = DIR + "out"
+	export.export_dir_path = DIR + "out/"
 	export.reduce_access_paths = reduce
 	export.file_parser = UtilsLocal.FileParser.new()
 	export.file_parser.set_export_obj(export)
 	for root in roots:
-		export.valid_files_for_transfer[root] = {Keys.TO: DIR + "out/" + root.get_file()}
+		export.valid_files_for_transfer[root] = {Keys.TO: DIR + "out/" + root.trim_prefix(export.source)}
 	export.sort_valid_files()
 	export.get_global_classes_used_in_valid_files()
 	export.get_file_dependencies()
+	export.get_global_class_export_paths()
+	export.resolve_dependency_placements()
 	return export
 
 

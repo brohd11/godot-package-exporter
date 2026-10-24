@@ -226,70 +226,70 @@ static func check_ignore(local_path, export_obj:ExportData.Export):
 	return false
 
 
-static func get_other_transfer_data(export_obj:ExportData.Export):
-	var other_transfers_array = export_obj.other_transfers
-	var export_dir_path = export_obj.export_dir_path
+## Expands other_transfers into one {FROM, TO, ...flags} entry per file, TO in source space.
+## A directory source keeps its subpaths under `to`. Any error invalidates the export and returns [].
+static func get_other_transfer_data(export_obj:ExportData.Export) -> Array:
 	var export_source_path = export_obj.source
-	
-	var other_transfer_data = {}
-	for other in other_transfers_array:
-		var custom_message = other.get(KeysData.CUSTOM_TREE_MESSAGE)
+
+	var transfers = []
+	var seen = {} # destination -> source, so two files can never land on one path
+	for other in export_obj.other_transfers:
 		var to:String = other.get(KeysData.TO)
-		#if not to.begins_with(export_dir_path):
-			#to = export_dir_path.path_join(to)
 		if not to.begins_with(export_source_path):
 			to = export_source_path.path_join(to)
-			
+
+		# Copied onto every file the row expands to, so a new flag needs no plumbing here.
+		var flags = {}
+		for key in [KeysData.CUSTOM_TREE_MESSAGE, KeysData.IGNORE_DEPS]:
+			if other.has(key):
+				flags[key] = other[key]
+
 		var from_files = other.get(KeysData.FROM)
-		if from_files == null:
-			if to.get_file() == ".gdignore":
-				from_files = KeysData.VIRTUAL_GDIGNORE
-				custom_message = " (virtual file)"
-		var single_from = false
+		if from_files == null and to.get_file() == ".gdignore":
+			from_files = KeysData.VIRTUAL_GDIGNORE
+			flags[KeysData.CUSTOM_TREE_MESSAGE] = " (virtual file)"
+
+		var pairs = [] # [from, to]
 		if from_files is String:
-			if FileAccess.file_exists(from_files):
-				from_files = [from_files]
-				single_from = true
+			if FileAccess.file_exists(from_files) or from_files.begins_with(KeysData.VIRTUAL):
+				pairs.append([from_files, to])
 			elif DirAccess.dir_exists_absolute(from_files):
-				var files_at_dir = DirAccess.get_files_at(from_files)
-				var file_array = []
-				for f in files_at_dir:
-					var ext = f.get_extension()
-					if ext == "uid" or ext == "import":
+				var dir = from_files.trim_suffix("/") + "/"
+				var files = UtilsRemote.GetFiles.scan(dir) if other.get(KeysData.RECURSIVE, false) \
+						else DirAccess.get_files_at(dir)
+				for f:String in files:
+					if f.get_extension() in ["uid", "import"]:
 						continue
-					var path = from_files.path_join(f)
-					file_array.append(path)
-				from_files = file_array
-			elif from_files.begins_with(KeysData.VIRTUAL):
-				from_files = [from_files]
-				single_from = true
+					var path = dir.path_join(f) if f.is_relative_path() else f
+					pairs.append([path, to.path_join(path.trim_prefix(dir))])
 			else:
 				printerr("Path not file or dir: %s" % from_files)
-				return {}
+				export_obj.invalidate()
+				return []
 		elif from_files is Array:
 			for file in from_files:
 				if not FileAccess.file_exists(file):
 					printerr("File doesn't exist, aborting: %s" % file)
-					return {}
-		
-		if from_files is not Array:
-			printerr("Issues with other transfers, destination: %s" % to)
-			return {}
-		
-		#if to in other_transfer_data.keys():
-		if other_transfer_data.has(to):
-			var to_data = other_transfer_data[to]
-			var single = to_data.get(KeysData.SINGLE)
-			if single:
-				printerr("Error with other transfers file, exporting multiple files to single file: %s" % to)
-				return {}
-			to_data[KeysData.FROM_FILES].append_array(from_files)
+					export_obj.invalidate()
+					return []
+				pairs.append([file, to.path_join(file.get_file())])
 		else:
-			other_transfer_data[to] = {KeysData.FROM_FILES:from_files, KeysData.SINGLE:single_from}
-			if custom_message:
-				other_transfer_data[to][KeysData.CUSTOM_TREE_MESSAGE] = custom_message
-	
-	return other_transfer_data
+			printerr("Issues with other transfers, destination: %s" % to)
+			export_obj.invalidate()
+			return []
+
+		for pair in pairs:
+			if seen.has(pair[1]):
+				printerr("Error with other transfers, %s and %s both export to: %s" % [seen[pair[1]], pair[0], pair[1]])
+				export_obj.invalidate()
+				return []
+			seen[pair[1]] = pair[0]
+			var entry = flags.duplicate()
+			entry[KeysData.FROM] = pair[0]
+			entry[KeysData.TO] = pair[1]
+			transfers.append(entry)
+
+	return transfers
 
 
 
@@ -500,13 +500,15 @@ static func run_git_describe(dir:String) -> Dictionary:
 class KeysData:
 	const TO = "to"
 	const FROM = "from"
-	const FROM_FILES = "from_files"
-	const SINGLE = "single"
-	
+	const RECURSIVE = "recursive"
+	## Copied (and path-rewritten) but never scanned for dependencies or global classes.
+	const IGNORE_DEPS = "ignore_deps"
+
 	const PATH = "path"
 	const REPLACE_WITH = "replace_with"
 	const DEPENDENT = "dependent"
 	const DEPENDENCY_DIR = "dependency_dir"
+	const DEPENDENCY_SOURCE = "dependency_source"
 	
 	const CUSTOM_TREE_MESSAGE = "custom_tree_message"
 	

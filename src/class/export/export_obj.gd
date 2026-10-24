@@ -34,7 +34,6 @@ var exclude_file_extensions:Array
 var exclude_files:Array
 var source_files:Array
 var other_transfers:Array
-var other_transfers_data:Dictionary
 var valid_files_for_transfer:Dictionary = {}
 
 var virtual_files:Dictionary = {}
@@ -61,6 +60,9 @@ var doc_files:Dictionary = {}
 var file_dependencies:Dictionary = {}
 
 var adjusted_remote_paths:Dictionary = {}
+## Source-space placements stay separate from renamed paths used by exported code.
+var _local_copy_paths:Dictionary = {}
+var _dependency_placements:Dictionary = {}
 var global_classes_used:Dictionary = {}
 
 var class_rename_ignore:Array = []
@@ -115,61 +117,40 @@ func get_valid_files_for_transfer():
 		
 		if FileAccess.file_exists(export_path) and not export_data.overwrite:
 			_UEditor.push_toast("File exists, aborting: " + export_path, 2 as _UEditor.ToastSeverity)
+			invalidate()
 			return
-		
+
 		if FileAccess.file_exists(l_path):
 			valid_files_for_transfer[l_path] = {_KeysData.TO:export_path}
 			if rename_plugin:
 				adjusted_remote_paths[l_path] = get_renamed_path(l_path)
-			
-			
-	
-	other_transfers_data = _ExportFileUtils.get_other_transfer_data(self)
-	for to in other_transfers_data.keys():
-		var data = other_transfers_data.get(to)
-		var from_files = data.get(_KeysData.FROM_FILES)
-		var single_from = data.get(_KeysData.SINGLE)
-		var custom_message = data.get(_KeysData.CUSTOM_TREE_MESSAGE)
-		for from in from_files:
-			if not FileAccess.file_exists(from):
-				if not from.begins_with("PE_VIRTUAL"):
-					_UEditor.push_toast("File_doesn't exist, aborting: " + from, 2 as _UEditor.ToastSeverity)
-					return
-				var virtual_file_type = from
-				var virtual_export_path = get_export_path(to)
-				if not virtual_files.has(virtual_file_type):
-					virtual_files[virtual_file_type] = {}
-				virtual_files[virtual_file_type][to] = {
-					_KeysData.TO: virtual_export_path,
-					_KeysData.CUSTOM_TREE_MESSAGE: custom_message
-				}
-				continue
-			
-			var to_path = to
-			if not single_from:
-				to_path = to.path_join(from.get_file())
-			
-			if FileAccess.file_exists(to_path) and not export_data.overwrite:
-				_UEditor.push_toast("File exists, aborting: " + to_path, 2 as _UEditor.ToastSeverity)
-				return
-			
-			var export_path = get_export_path(to_path)
-			valid_files_for_transfer[from] = {_KeysData.TO:export_path}
-			if custom_message:
-				valid_files_for_transfer[from][_KeysData.CUSTOM_TREE_MESSAGE] = custom_message
-			
-			files_to_scan_for_deps[from] = true
 
-			var adj_path = get_renamed_path(to_path)
-			adjusted_remote_paths[from] = adj_path
-			
+	for entry:Dictionary in _ExportFileUtils.get_other_transfer_data(self):
+		var from:String = entry[_KeysData.FROM]
+		var to_path:String = entry[_KeysData.TO]
+		var row = entry.duplicate()
+		row.erase(_KeysData.FROM)
+		row[_KeysData.TO] = get_export_path(to_path)
+		if from.begins_with(_KeysData.VIRTUAL):
+			if not virtual_files.has(from):
+				virtual_files[from] = {}
+			virtual_files[from][to_path] = row
+			continue
 
+		if FileAccess.file_exists(row[_KeysData.TO]) and not export_data.overwrite:
+			_UEditor.push_toast("File exists, aborting: " + row[_KeysData.TO], 2 as _UEditor.ToastSeverity)
+			invalidate()
+			return
 
+		valid_files_for_transfer[from] = row
+		adjusted_remote_paths[from] = get_renamed_path(to_path)
 
 
 func sort_valid_files():
 	for file:String in valid_files_for_transfer.keys():
 		files_to_copy[file] = valid_files_for_transfer.get(file)
+		if file_deps_ignored(file):
+			continue
 
 		if not file_parser.check_file_valid(file):
 			continue
@@ -202,10 +183,9 @@ func get_global_classes_used_in_valid_files():
 	if ignore_dependencies:
 		return
 		
-	for file:String in valid_files_for_transfer.keys():
-		if not file_parser.check_file_valid(file):
-			continue
-		
+	# sort_valid_files seeded exactly the valid, non-ignored files; keys() snapshots it, so the
+	# classes added below are not rescanned here.
+	for file:String in files_to_scan_for_deps.keys():
 		var file_ext = file.get_extension()
 		var classes_used
 		if file_ext == "gd":
@@ -271,13 +251,72 @@ func get_file_dependencies():
 					continue # stop remote classes from creating extra copy in remote
 		
 		
-		var remote_dir_path = get_remote_file_local_path(remote_path)
-		if dependency_dir == "current":
-			remote_dir_path = dependent.get_base_dir().path_join(remote_path.get_file())
-		elif dependency_dir != null and dependency_dir != "":
-			remote_dir_path = dependency_dir.path_join(remote_path.get_file())
+		if dependency_dir != null and dependency_dir != "":
+			_dependency_placements[remote_path] = data
+			continue
+		_register_copy(remote_path, get_remote_file_local_path(remote_path), dependent)
 
-		_register_copy(remote_path, remote_dir_path, dependent)
+
+## Run after global relocation so relative destinations follow the final declaring file.
+func resolve_dependency_placements() -> void:
+	var resolved:Dictionary = {}
+	for path:String in _dependency_placements:
+		_resolve_dependency_placement(path, resolved, [])
+
+
+func _resolve_dependency_placement(path:String, resolved:Dictionary, visiting:Array) -> String:
+	if resolved.has(path):
+		return resolved[path]
+	if path in visiting:
+		_dependency_placement_error(path, "cyclic destination chain: " + " -> ".join(visiting + [path]))
+		return ""
+	visiting.append(path)
+	var data:Dictionary = _dependency_placements[path]
+	var dir:String = data[_KeysData.DEPENDENCY_DIR]
+	var declaring_file:String = data[_KeysData.DEPENDENCY_SOURCE]
+	var declaring_dest = ""
+	var relative_dir = dir.replace("\\", "/")
+	if relative_dir.is_relative_path() and relative_dir != "<package>" and not relative_dir.begins_with("<package>/"):
+		declaring_dest = _dependency_declaring_destination(declaring_file, resolved, visiting)
+		if declaring_dest == "":
+			_dependency_placement_error(path, "declaring file has no valid export destination")
+			resolved[path] = ""
+			visiting.pop_back()
+			return ""
+	var destination = _ExportFileUtils.ExportPaths.dependency_destination(dir, source, declaring_dest, path.get_file())
+	visiting.pop_back()
+	resolved[path] = destination
+	if destination == "":
+		_dependency_placement_error(path, "destination must name a file inside " + source)
+	else:
+		_register_copy(path, destination, data.get(_KeysData.DEPENDENT))
+	return destination
+
+
+func _dependency_declaring_destination(path:String, resolved:Dictionary, visiting:Array) -> String:
+	# A remote base travels at its replacement stub's location.
+	path = replace_with_files.get(path, path)
+	if _dependency_placements.has(path):
+		return _resolve_dependency_placement(path, resolved, visiting)
+	if _local_copy_paths.has(path):
+		return _local_copy_paths[path]
+	var destination:String = files_to_copy.get(path, {}).get(_KeysData.TO, "")
+	var export_root = export_dir_path.trim_suffix("/") + "/"
+	if destination.begins_with(export_root):
+		return source.path_join(destination.trim_prefix(export_root))
+	return ""
+
+
+func _dependency_placement_error(path:String, reason:String) -> void:
+	var data:Dictionary = _dependency_placements[path]
+	var message = 'Dependency destination "%s" for %s declared in %s: %s' % [
+		data[_KeysData.DEPENDENCY_DIR], path, data[_KeysData.DEPENDENCY_SOURCE], reason]
+	printerr("Package Exporter - " + message)
+	_UEditor.push_toast(message, 2)
+	files_to_copy.erase(path)
+	adjusted_remote_paths.erase(path)
+	_local_copy_paths.erase(path)
+	invalidate()
 
 
 ## Seed targets already found by the global-class pass, including their transitive dependencies.
@@ -303,6 +342,7 @@ func _seed_access_reduction_targets() -> void:
 ## other passes null for a file that is copied regardless of who asked for it - and the GUI reads
 ## the difference back as the same "no dependent".
 func _register_copy(source_path:String, local_dest:String, dependent = null) -> void:
+	_local_copy_paths[source_path] = local_dest
 	adjusted_remote_paths[source_path] = get_renamed_path(local_dest)
 	files_to_copy[source_path] = {
 		_KeysData.TO: get_export_path(local_dest),
@@ -351,6 +391,11 @@ func _will_be_exported(path:String) -> bool:
 	if files_to_copy.has(path):
 		return true
 	return _UtilsRemote.UFile.is_file_in_directory(path, source)
+
+
+## Transfers marked ignore_deps are copied verbatim: never crawled, never seed global classes.
+func file_deps_ignored(path:String) -> bool:
+	return valid_files_for_transfer.get(path, {}).get(_KeysData.IGNORE_DEPS, false)
 
 
 func _free_binding_name(entry:Dictionary, by_name:Dictionary) -> String:

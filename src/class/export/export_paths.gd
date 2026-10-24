@@ -6,6 +6,27 @@ extends RefCounted
 const DEFAULT_BASE = "res://addons"
 
 
+## Returns an unrenamed source-space destination, or empty if it leaves the exported plugin.
+## declaring_dest is the declaring file's final placement, also in source space.
+static func dependency_destination(raw:String, source:String, declaring_dest:String, filename:String) -> String:
+	var path = raw.strip_edges().replace("\\", "/")
+	if path == "current" or path == ".":
+		path = filename
+	if path == "" or path.ends_with("/") or path.get_file() in [".", "..", "<package>"]:
+		return ""
+	if path.begins_with("<package>/"):
+		path = source.path_join(path.trim_prefix("<package>/"))
+	elif path.is_relative_path():
+		if declaring_dest == "":
+			return ""
+		path = declaring_dest.get_base_dir().path_join(path)
+	var root = ProjectSettings.globalize_path(source).simplify_path().trim_suffix("/")
+	var destination = ProjectSettings.globalize_path(path).simplify_path()
+	if not destination.begins_with(root + "/"):
+		return ""
+	return source.trim_suffix("/").path_join(destination.trim_prefix(root + "/"))
+
+
 ## Command targets are addon-relative unless absolute. Only project resources can be exported.
 ## Empty means invalid; existence is checked by the caller so discovery and init can share this.
 static func resolve_target(raw:String) -> String:

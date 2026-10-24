@@ -46,8 +46,7 @@ func _run() -> void: # EditorScript entry, for running this from the editor
 	print("\n".join(run_tests().output))
 
 
-## The directory is whatever follows the tag. A path may sit between the two, in which case it
-## is dropped — it is already in `raws`, and what follows is still the directory.
+## The destination follows the tag. A quoted source may precede it; that source is already in raws.
 static func _test_handler_values() -> void:
 	_check("value: bare word", _dir("current", ["res://a.gd"]), "current")
 	_check("value: after a quoted path", _dir('"res://a.png" assets', ["res://a.png"]), "assets")
@@ -55,6 +54,7 @@ static func _test_handler_values() -> void:
 	_check("value: nothing after the path", _dir('"res://a.png"', ["res://a.png"]), "")
 	_check("value: absent", _dir("", ["res://a.gd"]), "")
 	_check("value: path in a subdir", _dir("res://addons/x/deps", ["res://a.gd"]), "res://addons/x/deps")
+	_check("value: package root", _dir("<package>/licenses/font", ["res://a.txt"]), "<package>/licenses/font")
 
 
 ## No path on the line means nothing to mark, so no edge is emitted at all.
@@ -86,6 +86,7 @@ static func _test_scan_end_to_end() -> void:
 	_check("scan: dir from bare value", tag_edges[0].meta.get(DIR_KEY, ""), "current")
 	_check("scan: dir after quoted path", tag_edges[1].meta.get(DIR_KEY, ""), "assets")
 	_check("scan: tag name", tag_edges[0].tag, DependencyTags.TAG)
+	_check("scan: declaring file retained", tag_edges[0].meta.get(DependencyTags.DECLARING_FILE_KEY), src)
 	_check("scan: preload on the tagged line still found", graph.get_edges_of_kind(Kind.PRELOAD).size(), 1)
 	_check("scan: prose does not fire", graph.has("res://nope.gd"), false)
 

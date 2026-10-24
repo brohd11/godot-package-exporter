@@ -132,6 +132,7 @@ static func edges_to_dependencies(edges:Array, out:Dictionary) -> Dictionary:
 		var dependency_dir = edge.meta.get(DependencyTags.DIR_KEY, "")
 		if dependency_dir != "":
 			entry[KeysData.DEPENDENCY_DIR] = dependency_dir
+			entry[KeysData.DEPENDENCY_SOURCE] = edge.meta.get(DependencyTags.DECLARING_FILE_KEY, edge.from)
 	return out
 
 ## What each dotted access path in a file reduces to: {expression: {name, path, tail}}.

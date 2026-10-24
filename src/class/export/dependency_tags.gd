@@ -9,22 +9,22 @@ const IGNORE_REMOTE = "ignore-remote"
 ## own key. Naming it here rather than reaching for KeysData is what leaves this file
 ## with no imports, so registering the handler cannot pull the export pipeline in behind it.
 const DIR_KEY = "dir"
+const DECLARING_FILE_KEY = "declaring_file"
 
 
-## `#! dependency [dir]` - marks a path on the line as a dependency and optionally names the
-## directory it should land in. "current" places the file beside the one declaring it, anything
-## else is read as a directory; see export_obj.get_file_dependencies().
+## `#! dependency [destination]` optionally names the complete output file, including its name.
+## Relative paths follow the declaring file; <package>/ anchors to the export's source root.
+## "current" and "." keep the original filename beside the declaring file.
 static func dependency_dir() -> Callable:
 	return func(ctx:Dictionary) -> Variant:
 		if ctx.raws.is_empty():
 			return null
 		var value:String = ctx.value
-		# The path may sit after the tag (`#! dependency "res://x.png" assets`) - drop it,
-		# it is already in raws, and keep what follows as the directory.
+		# A quoted source may follow the tag; it is already in raws, so keep only its destination.
 		if value.begins_with('"') or value.begins_with("'"):
 			var end = value.find(value[0], 1)
 			value = value.substr(end + 1) if end > -1 else ""
 		value = value.strip_edges()
 		if value == "":
 			return {}
-		return {DIR_KEY: value}
+		return {DIR_KEY: value, DECLARING_FILE_KEY: ctx.file_path}
