@@ -3,15 +3,15 @@ extends RefCounted
 ## Proves a release export stands alone: installs it into an empty project (plus runtime deps),
 ## loads every script and resource there, and collects parse/compile errors from the output.
 ## load() hands back a non-null GDScript even when compilation fails, so output is the real signal.
-## Files whose extends line carries RUNTIME_EXTEND_TAG are not loaded: that line is a placeholder
-## swapped at runtime (Singletons.RuntimeExtend), so it can never compile as written.
+## Files tagged `#! pe-skip-parse` (DependencyTags.SKIP_PARSE) are not loaded, e.g. a placeholder
+## extends that Singletons.RuntimeExtend swaps at runtime and so can never compile as written.
 
 const ReleaseRunner = preload("res://addons/package_exporter/src/class/release/release_runner.gd")
+const DependencyTags = preload("res://addons/package_exporter/src/class/export/dependency_tags.gd")
 
 const PROBE_DIR = "pe_compile_probe"
 const LOAD_FAIL_PREFIX = "PE_LOAD_FAIL "
 const LOAD_EXTENSIONS = ["gd", "tscn", "tres"]
-const RUNTIME_EXTEND_TAG = "#! pe-runtime-extend"
 
 const _PROBE = """@tool
 extends EditorPlugin
@@ -71,33 +71,24 @@ static func broken_references(plugin_dir:String, install_path:String) -> Array[S
 		if not ext in LOAD_EXTENSIONS:
 			continue
 		var regex = preload_regex if ext == "gd" else ext_resource_regex
-		for m in regex.search_all(FileAccess.get_file_as_string(file)):
-			var target = m.get_string(1)
-			var resolved = _resolve(target, file, plugin_dir, install_path)
-			if resolved != "" and not FileAccess.file_exists(resolved):
-				broken.append("%s -> %s" % [file.trim_prefix(plugin_dir + "/"), target])
+		for line in FileAccess.get_file_as_string(file).split("\n"):
+			if line.strip_edges().begins_with("#"):
+				continue # a commented-out preload references nothing
+			for m in regex.search_all(line):
+				var target = m.get_string(1)
+				var resolved = _resolve(target, file, plugin_dir, install_path)
+				if resolved != "" and not FileAccess.file_exists(resolved):
+					broken.append("%s -> %s" % [file.trim_prefix(plugin_dir + "/"), target])
 	return broken
 
 
-## .gd files under plugin_dir, relative to it, whose extends line carries RUNTIME_EXTEND_TAG.
-static func runtime_extended(plugin_dir:String) -> Array[String]:
+## Files under plugin_dir, relative to it, tagged `#! pe-skip-parse`.
+static func parse_skipped(plugin_dir:String) -> Array[String]:
 	plugin_dir = plugin_dir.trim_suffix("/")
 	var found:Array[String] = []
 	for file in _walk(plugin_dir):
-		if file.get_extension() != "gd":
-			continue
-		var access = FileAccess.open(file, FileAccess.READ)
-		if access == null:
-			continue
-		# extends sits in the header; a few lines covers @tool and doc comments above it
-		for i in 10:
-			if access.eof_reached():
-				break
-			var line = access.get_line()
-			if line.begins_with("extends"):
-				if RUNTIME_EXTEND_TAG in line:
-					found.append(file.trim_prefix(plugin_dir + "/"))
-				break
+		if file.get_extension() in LOAD_EXTENSIONS and DependencyTags.file_skips_parse(file):
+			found.append(file.trim_prefix(plugin_dir + "/"))
 	return found
 
 
@@ -117,7 +108,7 @@ static func compile_errors(plugin_dir:String, install_path:String, work_dir:Stri
 		ReleaseRunner.copy_dir(extra_installs[extra], work_dir.path_join(extra.trim_prefix("res://")))
 
 	var skip:Array[String] = []
-	for rel in runtime_extended(plugin_dir):
+	for rel in parse_skipped(plugin_dir):
 		skip.append(install_path.path_join(rel))
 	var probe = _PROBE % [str(skip), install_path, str(LOAD_EXTENSIONS), LOAD_FAIL_PREFIX, ReleaseRunner.RESULT_PREFIX]
 	ReleaseRunner.write_plugin(work_dir, PROBE_DIR, probe)

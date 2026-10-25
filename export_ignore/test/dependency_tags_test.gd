@@ -31,6 +31,7 @@ static func run_tests() -> Dictionary:
 	_test_handler_declines()
 	_test_scan_end_to_end()
 	_test_ignore_remote()
+	_test_skip_parse()
 
 	_reset_dir()
 
@@ -148,6 +149,25 @@ static func _rm_recursive(dir:String) -> void:
 	for d in da.get_directories():
 		_rm_recursive(dir.path_join(d) + "/")
 	DirAccess.remove_absolute(dir)
+
+
+## File-level like `#! remote`: anywhere in the first HEADER_LINES lines, as a whole tag.
+static func _test_skip_parse() -> void:
+	var tag = "#! " + DependencyTags.SKIP_PARSE
+	var filler = []
+	for i in DependencyTags.HEADER_LINES - 1:
+		filler.append("# line %d" % i)
+	_check("skip-parse: line 1", DependencyTags.skips_parse(tag + "\nextends Foo.Bar\n"), true)
+	_check("skip-parse: after @tool and docs", DependencyTags.skips_parse("@tool\n## doc\n" + tag + "\n"), true)
+	_check("skip-parse: after code, still in header", DependencyTags.skips_parse("extends Foo\n" + tag + "\n"), true)
+	_check("skip-parse: last header line", DependencyTags.skips_parse("\n".join(filler) + "\n" + tag), true)
+	_check("skip-parse: past the header", DependencyTags.skips_parse("\n".join(filler) + "\n# one more\n" + tag), false)
+	_check("skip-parse: trailing text", DependencyTags.skips_parse(tag + " placeholder base\n"), true)
+	_check("skip-parse: longer tag name", DependencyTags.skips_parse(tag + "foo\n"), false)
+	_check("skip-parse: absent", DependencyTags.skips_parse("extends Foo\n"), false)
+	var path = _w("skip_parse.gd", tag + "\nextends Missing.Base\n")
+	_check("skip-parse: from file", DependencyTags.file_skips_parse(path), true)
+	_check("skip-parse: not a text type", DependencyTags.file_skips_parse(path.get_basename() + ".png"), false)
 
 
 static func _check(label:String, actual, expected) -> void:

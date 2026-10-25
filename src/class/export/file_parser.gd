@@ -4,6 +4,7 @@ const UtilsRemote = preload("res://addons/package_exporter/src/class/utils_remot
 const UtilsLocal = preload("res://addons/package_exporter/src/class/utils_local.gd")
 
 const KeysData = UtilsLocal.ExportFileUtils.KeysData
+const DependencyTags = UtilsLocal.DependencyTags
 
 const TEXT_FILE_TYPES = ["gd", "tscn", "cs", "tres"]
 
@@ -106,6 +107,8 @@ func get_dependencies(file_path:String, all_dependencies:Dictionary, scanned_fil
 		scanned_files[current_file_path] = true
 		if export_obj.file_deps_ignored(current_file_path):
 			continue
+		if DependencyTags.file_skips_parse(current_file_path):
+			continue
 
 		var file_deps = {}
 		var ext = current_file_path.get_extension()
@@ -152,6 +155,8 @@ func pre_export():
 
 func post_export_edit_file(file_path:String):
 	if not check_file_valid(file_path):
+		return
+	if DependencyTags.file_skips_parse(file_path):
 		return
 	var ext = file_path.get_extension()
 	

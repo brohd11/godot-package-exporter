@@ -123,14 +123,20 @@ func post_export_edit_file(file_path:String, file_lines:Variant=null):
 						line = 'extends "%s"' % extended_script.resource_path
 					elif global_class.find(".") > -1:
 						var extended_script_path = UClassDetail.resolve_script_access_path(current_script, global_class)
-						if extended_script_path.ends_with(".gd"):
-							line = 'extends "%s"' % extended_script_path
+						# Unresolved comes back as the bare name; splitting that on ".gd." invented a path.
+						if not extended_script_path.contains(".gd"):
+							export_obj.reporter.error("Could not resolve extended class in %s: %s" % [file_path, line])
 						else:
-							var path = extended_script_path.get_slice(".gd.", 0)
-							var suffix = extended_script_path.get_slice(".gd.", 1)
-							extended_script_path = path + ".gd"
-							line = 'extends "%s".%s' % [extended_script_path, suffix]
-						classes_preloaded.append_array(_recursive_get_globals(extended_script_path))
+							var trailing = line.substr(comment_stripped.length())
+							if extended_script_path.ends_with(".gd"):
+								line = 'extends "%s"' % extended_script_path
+							else:
+								var path = extended_script_path.get_slice(".gd.", 0)
+								var suffix = extended_script_path.get_slice(".gd.", 1)
+								extended_script_path = path + ".gd"
+								line = 'extends "%s".%s' % [extended_script_path, suffix]
+							line += trailing
+							classes_preloaded.append_array(_recursive_get_globals(extended_script_path))
 		
 		elif comment_stripped.find("const") > -1:
 			if _check_text_valid(line, "const"):

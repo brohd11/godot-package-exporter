@@ -159,9 +159,9 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool, tree_d
 		var label = plugin_dir.trim_prefix(full_export_path.trim_suffix("/") + "/")
 		for b in CompileCheck.broken_references(plugin_dir, exported.install_path):
 			failures.append("%s: missing reference %s" % [label, b])
-		var runtime_extended = CompileCheck.runtime_extended(plugin_dir)
-		if not runtime_extended.is_empty():
-			reporter.info("  %s: compile check skips %d runtime-extended file(s): %s" % [label, runtime_extended.size(), ", ".join(runtime_extended)])
+		var parse_skipped = CompileCheck.parse_skipped(plugin_dir)
+		if not parse_skipped.is_empty():
+			reporter.info("  %s: compile check skips %d pe-skip-parse file(s): %s" % [label, parse_skipped.size(), ", ".join(parse_skipped)])
 		var work_dir = cache.root.path_join("verify").path_join(label.replace("/", "_"))
 		var errs = CompileCheck.compile_errors(plugin_dir, exported.install_path, work_dir, verify_installs)
 		for e in errs:
