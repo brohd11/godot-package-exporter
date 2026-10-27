@@ -6,6 +6,7 @@ const Init = preload("res://addons/package_exporter/src/class/export/plugin_init
 static func run_tests() -> Dictionary:
 	var failures:Array = []
 	var expected := Optimization.defaults()
+	expected.enabled = false
 	var template:Dictionary = Init.PluginExportJSON.get_body_data()
 	var seeded:Dictionary = template.options.parser_settings.parse_gd.optimizer
 	if seeded != expected:
@@ -13,8 +14,8 @@ static func run_tests() -> Dictionary:
 	var yaml := YAMLParser.new()
 	if yaml.parse(YAMLParser.dump(template)) != OK or yaml.data.options.parser_settings.parse_gd.optimizer != expected:
 		failures.append("seeded defaults did not survive YAML serialization")
-	seeded.enabled = false
-	if not Init.PluginExportJSON.get_body_data().options.parser_settings.parse_gd.optimizer.enabled:
+	seeded.enabled = true
+	if Init.PluginExportJSON.get_body_data().options.parser_settings.parse_gd.optimizer.enabled:
 		failures.append("template defaults leaked between initializations")
 	var defaults := Optimization.configuration({})
 	if not defaults.errors.is_empty() or not defaults.options.enabled or defaults.options.inline_mode != "tagged" or defaults.options.struct_mode != "tagged":
