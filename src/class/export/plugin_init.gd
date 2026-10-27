@@ -336,7 +336,7 @@ path=""
 class PluginExportJSON:
 	static func _optimizer_defaults() -> Dictionary:
 		var settings:Dictionary = UtilsRemote.GDScriptOptimizer.Config.DEFAULTS.duplicate(true)
-		settings.enabled = true
+		settings.enabled = false
 		return settings
 
 	static func get_body_data():
@@ -351,10 +351,10 @@ class PluginExportJSON:
 				KeysConfig.Options.OVERWRITE: true,
 				KeysConfig.Options.INCLUDE_UID: true,
 				KeysConfig.Options.INCLUDE_IMPORT: true,
-				KeysConfig.Options.IGNORE_SRC: true,
+				KeysConfig.Options.IGNORE_SRC: false,
 				KeysConfig.Options.USE_TAG_IN_CFG: true,
 				KeysConfig.Options.INCLUDE_MIN_VERSION: true,
-				KeysConfig.Options.MOVE_GLOBAL_FILES: true,
+				KeysConfig.Options.MOVE_GLOBAL_FILES: false,
 				KeysConfig.Options.INCLUDE_DOCS: true,
 				KeysConfig.Options.INCLUDE_PROJECT_LICENSE: false,
 				KeysConfig.Options.PARSER_SETTINGS:{
