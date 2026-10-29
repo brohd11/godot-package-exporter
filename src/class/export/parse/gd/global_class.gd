@@ -32,9 +32,9 @@ func pre_export() -> void:
 
 func post_export_edit_file(file_path:String, file_lines:Variant=null) -> Variant:
 	file_lines = strip_type_cast.post_export_edit_file(file_path, file_lines)
+	file_lines = global_rename.post_export_edit_file(file_path, file_lines)
 	return file_lines
 
 func post_export_edit_line(line:String) -> String:
-	line = global_rename.post_export_edit_line(line)
 	line = remove_namespace.post_export_edit_line(line)
 	return line

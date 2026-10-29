@@ -172,6 +172,8 @@ static func _test_rewrites() -> void:
 		"### Package Exporter Global Classes"), true)
 	_check("renamed class use rewritten", _has(dir, "src/core/consumer.gd",
 		"PETFixtureGlobal."), false)
+	_check("renamed class kept inside multi-line string", _has(dir, "src/core/consumer.gd",
+		"\tfunc global() -> PETFixtureGlobal:\n"), true)
 
 	_check("uid preload resolved to the copy", _has(dir, "src/core/consumer.gd",
 		'preload("uid://'), false)
