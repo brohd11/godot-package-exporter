@@ -37,7 +37,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       WS: ${{ github.workspace }}/ws
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: pkg
           fetch-depth: 0
@@ -81,7 +81,7 @@ jobs:
           jq -r '.[]' <<< "$ZIPS" | while read -r f; do cp "$f" "$RUNNER_TEMP/zips/"; done
 
       - name: Upload zips
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-zips
           path: ${{ runner.temp }}/zips/
@@ -89,7 +89,7 @@ jobs:
 
       - name: Upload failed export
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-export-debug
           path: |

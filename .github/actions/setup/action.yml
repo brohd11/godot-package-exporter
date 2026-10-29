@@ -157,7 +157,7 @@ runs:
 
     - name: Cache Godot
       id: godot-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/godot
         key: godot-${{ steps.pkg.outputs.godot }}-linux
@@ -178,7 +178,7 @@ runs:
       run: echo "$HOME/godot" >> "$GITHUB_PATH"
 
     # Tag mirrors, release zips, toolchains and workspaces; tags are trusted as immutable.
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.cache/package_exporter
         key: package-exporter-${{ github.repository }}-${{ steps.pkg.outputs.godot }}-${{ hashFiles(format('{0}/*.cfg', steps.pkg.outputs.rel), format('{0}/_export_ignore/*', steps.pkg.outputs.rel), format('{0}/export_ignore/*.yml', steps.pkg.outputs.rel)) }}

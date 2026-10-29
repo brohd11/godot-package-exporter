@@ -35,7 +35,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       WS: ${{ github.workspace }}/ws
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: pkg
           fetch-depth: 0
@@ -63,7 +63,7 @@ jobs:
 
       - name: Upload test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-log-${{ steps.pkg.outputs.godot }}
           path: ${{ runner.temp }}/test.log
