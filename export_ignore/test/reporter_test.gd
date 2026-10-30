@@ -1,13 +1,14 @@
 @tool
 extends EditorScript
 
-## Routing rules of the export Reporter. Each call also echoes to Output, so the run prints a few
-## "reporter_test:" lines - those are the fixtures, not failures.
+## Routing rules of the export Reporter and the console sink. Only sinkless calls print to Output,
+## so the run prints one "reporter_test:" line - a fixture, not a failure.
 ##
 ##     load("res://addons/package_exporter/export_ignore/test/reporter_test.gd").run_tests()
 
 const Reporter = preload("res://addons/package_exporter/src/class/utils_local.gd").Reporter
 const Level = Reporter.Level
+const PECommandUtils = preload("res://addons/package_exporter/src/editor_plugins/console_command/command_utils.gd")
 
 static var _failures:Array[String] = []
 static var _passed:int = 0
@@ -21,6 +22,7 @@ static func run_tests() -> Dictionary:
 	_test_verbose()
 	_test_dedupe()
 	_test_or_default()
+	_test_console_sink()
 
 	var output:Array = ["reporter: %d passed, %d failed" % [_passed, _failures.size()]]
 	output.append_array(_failures)
@@ -81,6 +83,26 @@ static func _test_or_default() -> void:
 	var made = Reporter.or_default(null)
 	_check("or_default makes one", made != null, true)
 	_check("or_default keeps given", Reporter.or_default(made), made)
+
+
+## Stands in for a gdsh Context: only the two calls the console sink makes.
+class FakeContext:
+	var stdout:Array = []
+	var stderr:Array = []
+	func append_output(line:String) -> void: stdout.append(line)
+	func append_error(line:String) -> void: stderr.append(line)
+
+
+static func _test_console_sink() -> void:
+	var ctx = FakeContext.new()
+	var reporter = PECommandUtils.console_reporter(ctx)
+	reporter.info("reporter_test: console info")
+	reporter.note("reporter_test: console note")
+	reporter.warn("reporter_test: console warn")
+	reporter.error("reporter_test: console error")
+	_check("console: note to stdout, info held back", ctx.stdout, ["reporter_test: console note"])
+	_check("console: warn styled, error plain", ctx.stderr, [
+		"[color=#fedd66]Warning: reporter_test: console warn[/color]", "reporter_test: console error"])
 
 
 static func _check(label:String, actual, expected) -> void:

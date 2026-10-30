@@ -85,7 +85,7 @@ static func _test_package(plugin_name:String, refresh:bool, local:bool, tree_dir
 	var toolchain = ""
 	if lock.target.path != ReleaseWorkspace.TOOLCHAIN_PATH:
 		var tc = Toolchain.new()
-		var info = tc.resolve(options, cache.root, local, refresh, ReleaseExport._local_toolchain_dir() if local else "")
+		var info = tc.resolve(options, cache.root, refresh)
 		if info.is_empty():
 			for e in tc.errors:
 				_note("  " + e)

@@ -2,8 +2,7 @@
 extends RefCounted
 ## The released package_exporter a release export runs in its workspace - Go's toolchain, in effect.
 ## Its version is `toolchain` in the export config's options, or the dev exporter's version when
-## unset. Remote: the GitHub release zip, downloaded once and cached. --local: this project's own
-## export of it, refused when older than the dev export scripts it was built from.
+## unset. Always the GitHub release zip, downloaded once and cached - never this project's own copy.
 
 const DepResolver = preload("res://addons/package_exporter/src/class/release/dep_resolver.gd")
 const ReleaseRunner = preload("res://addons/package_exporter/src/class/release/release_runner.gd")
@@ -11,23 +10,19 @@ const ReleaseRunner = preload("res://addons/package_exporter/src/class/release/r
 const NAME = "package_exporter"
 const CONFIG_KEY = "toolchain"
 const DEV_DIR = "res://addons/package_exporter"
-const DEV_EXPORT_SCRIPTS = "res://addons/package_exporter/src/class/export"
 const FALLBACK_REPO = "https://github.com/brohd11/godot-package-exporter"
 const ASSET = "package-exporter-%s.zip"
 
 var errors:Array[String] = []
 
 
-## {dir, version, source: "remote"|"local", id}, or {} with `errors` filled. `local_dir` is where
-## this project exports package_exporter; only read when `local`.
-func resolve(options:Dictionary, cache_root:String, local:bool, refresh:bool, local_dir:String = "") -> Dictionary:
+## {dir, version, source: "remote", id}, or {} with `errors` filled.
+func resolve(options:Dictionary, cache_root:String, refresh:bool) -> Dictionary:
 	errors.clear()
 	var version = pick_version(options, _cfg_version(DEV_DIR)).trim_prefix("v")
 	if version == "":
 		errors.append("no toolchain version: set options.%s or give %s a version=" % [CONFIG_KEY, DEV_DIR])
 		return {}
-	if local:
-		return _resolve_local(version, local_dir)
 	return _resolve_remote(version, cache_root, refresh)
 
 
@@ -49,17 +44,6 @@ static func asset_urls(repo_url:String, version:String) -> Array[String]:
 	return out
 
 
-## The newest path modified after `threshold`, or "" when nothing is newer.
-static func newest_after(mtimes:Dictionary, threshold:int) -> String:
-	var newest = ""
-	var newest_time = threshold
-	for path in mtimes:
-		if mtimes[path] > newest_time:
-			newest = path
-			newest_time = mtimes[path]
-	return newest
-
-
 func _resolve_remote(version:String, cache_root:String, refresh:bool) -> Dictionary:
 	var dir = cache_root.path_join("toolchains").path_join("%s-%s" % [NAME, version])
 	var zip_path = dir.path_join(ASSET % version)
@@ -71,7 +55,7 @@ func _resolve_remote(version:String, cache_root:String, refresh:bool) -> Diction
 			ReleaseRunner.remove_dir(dir)
 		DirAccess.make_dir_recursive_absolute(dir)
 		if not _download(_repo_url(), version, zip_path):
-			errors.append("no release %s for %s - publish it, pin '%s' to a released version, or use --local" % [
+			errors.append("no release %s for %s - publish it, or pin '%s' to a released version" % [
 				ASSET % version, version, CONFIG_KEY])
 			ReleaseRunner.remove_dir(dir)
 			return {}
@@ -82,27 +66,6 @@ func _resolve_remote(version:String, cache_root:String, refresh:bool) -> Diction
 			return {}
 
 	return _checked(plugin_dir, version, "remote", FileAccess.get_sha256(zip_path))
-
-
-func _resolve_local(version:String, local_dir:String) -> Dictionary:
-	var cfg_path = local_dir.path_join("plugin.cfg")
-	if local_dir == "" or not FileAccess.file_exists(cfg_path):
-		errors.append("no local %s export at '%s'; run 'package_exporter export %s' first" % [NAME, local_dir, NAME])
-		return {}
-
-	# plugin.cfg is rewritten by every export, so its time is when this copy was built.
-	var exported_at = FileAccess.get_modified_time(cfg_path)
-	var mtimes = {}
-	for file in _walk(ProjectSettings.globalize_path(DEV_EXPORT_SCRIPTS)):
-		if file.get_extension() == "gd":
-			mtimes[file] = FileAccess.get_modified_time(file)
-	var newer = newest_after(mtimes, exported_at)
-	if newer != "":
-		errors.append("local %s export is older than %s; run 'package_exporter export %s' again" % [
-			NAME, ProjectSettings.localize_path(newer), NAME])
-		return {}
-
-	return _checked(local_dir, version, "local", "local-%d" % exported_at)
 
 
 func _checked(plugin_dir:String, version:String, source:String, id:String) -> Dictionary:
@@ -129,12 +92,3 @@ static func _repo_url() -> String:
 
 static func _cfg_version(dir:String) -> String:
 	return str(DepResolver.PackageCfg.dir_value(dir, "version", ""))
-
-
-static func _walk(dir:String) -> Array[String]:
-	var out:Array[String] = []
-	for f in DirAccess.get_files_at(dir):
-		out.append(dir.path_join(f))
-	for d in DirAccess.get_directories_at(dir):
-		out.append_array(_walk(dir.path_join(d)))
-	return out

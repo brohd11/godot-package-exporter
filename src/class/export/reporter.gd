@@ -1,7 +1,8 @@
 extends RefCounted
-## One funnel for everything an export says. Every line still goes to the Output panel as it
-## always has; a sink (the console command) also gets NOTE/WARN/ERROR, and INFO only when verbose.
-## Repeated warnings and errors reach the sink once but are all kept in `entries`.
+## One funnel for everything an export says. Without a sink every line goes to the Output panel.
+## A sink (the console command) replaces Output - the editor console prints into it already - and
+## gets NOTE/WARN/ERROR, INFO only when verbose. Repeated warnings and errors reach the sink once
+## but are all kept in `entries`.
 
 const _UtilsRemote = preload("res://addons/package_exporter/src/class/utils_remote.gd")
 const _UEditor = _UtilsRemote.UEditor
@@ -27,21 +28,25 @@ static func or_default(reporter) -> SELF:
 
 
 func info(text:String) -> void:
-	print(text)
+	if not sink.is_valid():
+		print(text)
 	_add(Level.INFO, text)
 
 ## Header and result lines - always shown.
 func note(text:String) -> void:
-	print_rich(text)
+	if not sink.is_valid():
+		print_rich(text)
 	_add(Level.NOTE, text)
 
 func warn(text:String) -> void:
-	_UEditor.print_warn(text)
+	if not sink.is_valid():
+		_UEditor.print_warn(text)
 	_add(Level.WARN, text)
 
 func error(text:String, toast := false) -> void:
-	printerr(text)
-	# A headless release child has no toaster; print=false since printerr already covered it.
+	if not sink.is_valid():
+		printerr(text)
+	# A headless release child has no toaster; print=false since the line is already reported.
 	if toast and DisplayServer.get_name() != "headless":
 		_UEditor.push_toast(text, 2 as _UEditor.ToastSeverity, false)
 	_add(Level.ERROR, text)

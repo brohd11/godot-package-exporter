@@ -99,7 +99,7 @@ static func _export_release(plugin_name:String, refresh:bool, local:bool, tree_d
 	var toolchain = ""
 	if lock.target.path != ReleaseWorkspace.TOOLCHAIN_PATH:
 		var tc = Toolchain.new()
-		var info = tc.resolve(options, cache.root, local, refresh, _local_toolchain_dir() if local else "")
+		var info = tc.resolve(options, cache.root, refresh)
 		if info.is_empty():
 			for e in tc.errors:
 				_note("  " + e)
@@ -216,21 +216,6 @@ static func engine_check(min_version:String, findings:Array, engine:Dictionary) 
 			break
 	return "sources need Godot %s%s, but this export runs on %s; set godot-version in .github/workflows/release.yml, or export from a newer editor" % [
 		min_version, where, engine.get("string", "%d.%d" % [engine.major, engine.minor])]
-
-
-## Where this project exports package_exporter, for --local toolchains. Computed with the export
-## pipeline (it resolves {{version}} templates), so it stays here rather than in Toolchain.
-static func _local_toolchain_dir() -> String:
-	var config_path = ExportFileUtils.get_export_config_path(Toolchain.NAME, reporter)
-	if not FileAccess.file_exists(config_path):
-		return ""
-	var data = ExportFileUtils.get_export_data(config_path, reporter)
-	if not data is Dictionary or data.get("exports", []).is_empty():
-		return ""
-	var entry = data.exports[0]
-	var full = ExportFileUtils.get_full_export_path(data.export_root, data.plugin_folder, config_path, reporter)
-	var package = full.path_join(ExportFileUtils.get_export_name(entry, data.plugin_folder, config_path, reporter))
-	return package.path_join(ExportFileUtils.get_export_folder(entry, config_path)).trim_suffix("/")
 
 
 ## Swaps the dev-tree git snapshot for the lock. The released plugin.cfg is left alone: its

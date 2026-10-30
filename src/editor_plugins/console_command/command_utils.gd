@@ -8,11 +8,14 @@ const TargetAddons = PluginExporter.TargetAddons
 const TARGET_HELP = "\nTargets are relative to res://addons/ (e.g. _lib/util_r), or absolute res:// / filesystem paths inside this project."
 
 ## A Reporter that streams into the console: warnings and errors to stderr, the rest to stdout.
+## Warnings carry their own color, which wins over the console's red stderr wrap.
 static func console_reporter(ctx, verbose := false) -> Reporter:
 	var reporter = Reporter.new()
 	reporter.verbose = verbose
 	reporter.sink = func(text:String, level:int):
-		if level >= Reporter.Level.WARN:
+		if level == Reporter.Level.WARN:
+			ctx.append_error("[color=#fedd66]Warning: %s[/color]" % text)
+		elif level == Reporter.Level.ERROR:
 			ctx.append_error(text)
 		else:
 			ctx.append_output(text)

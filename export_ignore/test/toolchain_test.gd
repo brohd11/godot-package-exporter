@@ -1,8 +1,8 @@
 @tool
 extends EditorScript
 
-## Tests for the release export's toolchain lookup: version pinning, release asset urls, the
-## --local staleness rule, and cached remote toolchains. No network - a cached toolchain is laid
+## Tests for the release export's toolchain lookup: version pinning, release asset urls and
+## cached remote toolchains. No network - a cached toolchain is laid
 ## out by hand, so resolve() never has a reason to download.
 ##
 ##     load("res://addons/package_exporter/export_ignore/test/toolchain_test.gd").run_tests()
@@ -24,9 +24,7 @@ static func run_tests() -> Dictionary:
 
 	_test_pick_version()
 	_test_asset_urls()
-	_test_newest_after()
 	_test_cached_remote(root)
-	_test_local_missing()
 	_test_unzip(root)
 
 	ReleaseRunner.remove_dir(root)
@@ -57,13 +55,6 @@ static func _test_asset_urls() -> void:
 		"https://github.com/o/r/releases/download/v1.0/package-exporter-1.0.zip")
 
 
-static func _test_newest_after() -> void:
-	var mtimes = {"a.gd": 100, "b.gd": 300, "c.gd": 200}
-	_check("newest past threshold", Toolchain.newest_after(mtimes, 150), "b.gd")
-	_check("nothing newer", Toolchain.newest_after(mtimes, 300), "")
-	_check("empty", Toolchain.newest_after({}, 0), "")
-
-
 ## A version already in the cache resolves as-is: trusted, like a mirrored tag.
 static func _test_cached_remote(root:String) -> void:
 	var cache_root = root.path_join("cache")
@@ -72,7 +63,7 @@ static func _test_cached_remote(root:String) -> void:
 	_write(dir.path_join("package-exporter-9.9.9.zip"), "not really a zip")
 
 	var tc = Toolchain.new()
-	var info = tc.resolve({"toolchain": "v9.9.9"}, cache_root, false, false)
+	var info = tc.resolve({"toolchain": "v9.9.9"}, cache_root, false)
 	_check("cached: resolved " + str(tc.errors), info.is_empty(), false)
 	if not info.is_empty():
 		_check("cached: dir", info.dir, dir.path_join("addons/package_exporter"))
@@ -81,14 +72,8 @@ static func _test_cached_remote(root:String) -> void:
 
 	_write(dir.path_join("addons/package_exporter/plugin.cfg"), '[plugin]\nversion="9.9.8"\n')
 	var mismatch = Toolchain.new()
-	_check("cached: wrong version rejected", mismatch.resolve({"toolchain": "9.9.9"}, cache_root, false, false), {})
+	_check("cached: wrong version rejected", mismatch.resolve({"toolchain": "9.9.9"}, cache_root, false), {})
 	_check("cached: mismatch named", mismatch.errors.size() == 1 and "is 9.9.8, expected 9.9.9" in mismatch.errors[0], true)
-
-
-static func _test_local_missing() -> void:
-	var tc = Toolchain.new()
-	_check("local: missing export", tc.resolve({"toolchain": "1.0"}, "", true, false, "/nonexistent/package_exporter"), {})
-	_check("local: says to export", tc.errors.size() == 1 and "run 'package_exporter export package_exporter' first" in tc.errors[0], true)
 
 
 static func _test_unzip(root:String) -> void:

@@ -316,7 +316,7 @@ config are untouched, and `plugin.cfg` is never written.
 `--local` is for trying a release before pushing anything. Every repo with a checkout in this
 project is fetched from that checkout instead of its remote; repos without one (a checkout counts
 only if its `origin` is the same repo) still come from their remote, with a warning. A missing
-local tag or local package_exporter export is an error, never a fallback. It is still tag-pinned, so only committed, tagged files are used - you tag, but
+local tag is an error, never a fallback. It is still tag-pinned, so only committed, tagged files are used - you tag, but
 don't push. A local tag you move is followed rather than rejected. Lock entries are marked
 `"source": "local"`, and each local tag that isn't on `origin` yet gets a warning.
 
@@ -325,9 +325,9 @@ project, so the exporter's own libraries can't clash with the pinned ones. Its v
 `toolchain` under `options` in the export config, or this project's package_exporter version when
 unset. Normally it is the GitHub release zip (`package-exporter-<version>.zip` on tag
 `v<version>`), downloaded once into the cache's `toolchains` folder and reused; `--refresh`
-downloads it again. With `--local` it is this project's own export of package_exporter instead,
-refused when any export script has changed since that export was made. If the toolchain's export
-scripts don't compile, the release export fails before verification.
+downloads it again. `--local` doesn't change this: only released toolchains run release exports.
+If the dev version is ahead of the latest release, pin `toolchain` to a released version. If the
+toolchain's export scripts don't compile, the release export fails before verification.
 
 The export carries `.export_lock.json` (repo, tag, commit, path per dependency, and the toolchain) in place of
 `.export_git_details`. Entries marked `verify` are the ones the compile check installed. The
